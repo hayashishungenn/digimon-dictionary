@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Node / SvelteKit
+node_modules/
+apps/web/.svelte-kit/
+apps/web/build/
+apps/web/.vite/
+*.tsbuildinfo
+
+# Data caches — do NOT commit raw third-party copyrighted images.
+data/images/
+data/raw/
+data/normalized/
+data/reports/
+!data/images/.gitkeep
+!data/raw/.gitkeep
+!data/normalized/.gitkeep
+!data/reports/.gitkeep
+
+# Database (regenerable via sync-data)
+*.sqlite
+*.sqlite3
+*.db
+exports/
+!exports/.gitkeep
+
+# Runtime sync state
+data/.sync_state.json
+data/.http_cache/
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.local

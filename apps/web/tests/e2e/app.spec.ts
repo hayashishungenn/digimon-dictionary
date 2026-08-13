@@ -1,0 +1,102 @@
+import { test, expect } from '@playwright/test';
+
+// Product-spec §62 E2E scenarios: search across three languages hits the same
+// entity; detail page shows trilingual names; skills; evolution navigation;
+// combined filtering; favorites survive reload.
+//
+// These tests need the real synced database — run `uv run python scripts/sync_data.py`
+// before executing.
+
+test.describe.configure({ mode: 'serial' });
+
+test('home page loads with the digimon grid', async ({ page }) => {
+	await page.goto('/');
+	await expect(page.getByRole('heading', { name: '数码宝贝全图鉴' })).toBeVisible();
+	await expect(page.locator('[data-testid="digimon-card"]').first()).toBeVisible();
+});
+
+test('search 亚古兽 finds Agumon and opens the same entity as アグモン / Agumon', async ({ page }) => {
+	await page.goto('/');
+	const search = page.getByRole('textbox', { name: '搜索数码兽' });
+
+	await search.fill('亚古兽');
+	await expect(page.getByText('亚古兽', { exact: true }).first()).toBeVisible();
+	// click the matching card
+	await page.locator('[data-testid="digimon-card"]').filter({ hasText: '亚古兽' }).first().click();
+	await page.waitForURL(/\/digimon\//);
+	const slugAfterZh = page.url().split('/').pop();
+	await expect(page.locator('.detail-h1')).toContainText('亚古兽');
+
+	// now search in English
+	await page.goto('/');
+	await search.fill('Agumon');
+	await expect(page.locator('[data-testid="digimon-card"]').filter({ hasText: 'Agumon' }).first()).toBeVisible();
+	await page.locator('[data-testid="digimon-card"]').filter({ hasText: 'Agumon' }).first().click();
+	await page.waitForURL(/\/digimon\//);
+	expect(page.url().split('/').pop()).toBe(slugAfterZh);
+
+	// and in Japanese
+	await page.goto('/');
+	await search.fill('アグモン');
+	await expect(page.locator('[data-testid="digimon-card"]').filter({ hasText: 'アグモン' }).first()).toBeVisible();
+	await page.locator('[data-testid="digimon-card"]').filter({ hasText: 'アグモン' }).first().click();
+	await page.waitForURL(/\/digimon\//);
+	expect(page.url().split('/').pop()).toBe(slugAfterZh);
+});
+
+test('detail page shows trilingual names and skills', async ({ page }) => {
+	await page.goto('/digimon/agumon');
+	await expect(page.locator('.detail-h1')).toContainText('亚古兽');
+	await expect(page.locator('.detail-h1')).toContainText('アグモン');
+	await expect(page.locator('.detail-sub')).toContainText('Agumon');
+	// skills section present (may be empty for some)
+	const section = page.getByText('必杀技 / 技能 Skills');
+	await expect(section).toBeVisible();
+});
+
+test('clicking a next evolution opens its detail page', async ({ page }) => {
+	await page.goto('/digimon/agumon');
+	const nextSection = page.getByText('全部可能后续');
+	await nextSection.waitFor();
+	// click the first evolution node link
+	const node = page.locator('.evo-row-wrap .evo-node').first();
+	await node.click();
+	await page.waitForURL(/\/digimon\//);
+	await expect(page.locator('.detail-h1')).toBeVisible();
+});
+
+test('combined filter: 究极体 + 疫苗', async ({ page }) => {
+	await page.goto('/');
+	// level tab: 究极体
+	await page.getByRole('tab', { name: '究极体' }).click();
+	// attribute filter
+	await page.locator('select').first().selectOption('vaccine');
+	await expect(page.locator('[data-testid="digimon-card"]').first()).toBeVisible();
+	const count = await page.locator('.result-count').textContent();
+	expect(count).toContain('共');
+	// every card should show 究极体
+	const badges = page.locator('.digimon-card .badge');
+	await expect(badges.first()).toContainText('究极体');
+});
+
+test('favorites persist across reload', async ({ page }) => {
+	await page.goto('/digimon/agumon');
+	const favBtn = page.locator('.detail-art .fav');
+	await favBtn.click();
+	await expect(favBtn).toContainText('★');
+	await page.reload();
+	await expect(page.locator('.detail-art .fav')).toContainText('★');
+});
+
+test('missing image shows placeholder, not broken image', async ({ page }) => {
+	// agumon-ds is a digimons_net-only entity with no image in this dataset.
+	await page.goto('/digimon/agumon-ds');
+	// the placeholder replaces the missing image instead of a broken-image icon
+	await expect(page.locator('.img-placeholder').first()).toBeVisible();
+	// and the main art area has no broken <img>
+	const artImgs = page.locator('.detail-art img');
+	const broken = await artImgs.evaluateAll((els) =>
+		els.filter((e) => (e as HTMLImageElement).complete && (e as HTMLImageElement).naturalWidth === 0)
+	);
+	expect(broken.length).toBe(0);
+});
