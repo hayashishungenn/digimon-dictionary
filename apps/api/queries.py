@@ -361,8 +361,12 @@ def get_provenance(conn: sqlite3.Connection, entity_type: str, entity_id: int) -
 
 
 # --------------------------------------------------------------------------
-# search (FTS5)
+# search (FTS5 + LIKE)
 # --------------------------------------------------------------------------
+def _has_cjk(text: str) -> bool:
+    return any("一" <= ch <= "鿿" or "぀" <= ch <= "ヿ" for ch in text)
+
+
 def search_digimon(
     conn: sqlite3.Connection,
     query: str,
@@ -370,31 +374,45 @@ def search_digimon(
     limit: int = 30,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
-    """FTS5-backed multilingual search with alias expansion.
+    """Multilingual search: exact name → substring (LIKE) → aliases → FTS.
 
-    Falls back to a LIKE scan when FTS5 yields nothing (very short queries).
+    FTS5's unicode61 tokenizer splits CJK into per-character tokens, so a
+    Chinese query like 亚古兽 matches ANY digimon containing 亚/古/兽 (OR
+    semantics). We therefore use exact + LIKE matching for CJK queries and
+    reserve FTS for Latin queries (where tokenization is helpful). Exact-name
+    matches always rank first.
     """
     q = query.strip()
     if not q:
         return []
-    # FTS5 tokenization handles CJK poorly without trigram tokenizer, so we run
-    # BOTH an FTS5 phrase search and a LIKE scan, then union.
-    rows = []
+    q2 = q.replace("'", "''")
+    rows: list[int] = []
     seen: set[int] = set()
-    fts_phrase = q.replace('"', ' ')
-    try:
-        fts_rows = conn.execute(
-            """SELECT d.id FROM digimon_fts f JOIN digimon d ON d.id = f.rowid
-               WHERE digimon_fts MATCH ? ORDER BY bm25(digimon_fts) LIMIT ?""",
-            [fts_phrase, limit * 3],
-        ).fetchall()
-        for r in fts_rows:
-            if r["id"] not in seen:
-                seen.add(r["id"])
-                rows.append(r["id"])
-    except sqlite3.OperationalError:
-        pass  # malformed FTS query — fall through to LIKE
 
+    def add(id_: int) -> None:
+        if id_ not in seen:
+            seen.add(id_)
+            rows.append(id_)
+
+    # 1. exact name matches (any language) rank first
+    for r in conn.execute(
+        """SELECT id FROM digimon
+           WHERE name_zh_cn = ? OR name_en = ? COLLATE NOCASE OR name_ja = ?
+              OR name_romanized = ? COLLATE NOCASE OR name_en_dub = ? COLLATE NOCASE
+           LIMIT ?""",
+        [q, q, q, q, q, limit],
+    ).fetchall():
+        add(r["id"])
+
+    # 1b. exact alias matches (e.g. dapi's "Omegamon" aliasing Omnimon) next
+    for r in conn.execute(
+        """SELECT DISTINCT a.digimon_id FROM digimon_alias a
+           WHERE a.alias = ? COLLATE NOCASE LIMIT ?""",
+        [q, limit],
+    ).fetchall():
+        add(r["digimon_id"])
+
+    # 2. substring (LIKE) matches across primary names
     like = f"%{q}%"
     like_rows = conn.execute(
         """SELECT id FROM digimon
@@ -402,30 +420,36 @@ def search_digimon(
               OR name_en LIKE ? COLLATE NOCASE
               OR name_ja LIKE ? COLLATE NOCASE
               OR name_romanized LIKE ? COLLATE NOCASE
-           ORDER BY CASE WHEN name_zh_cn = ? OR name_en = ? OR name_ja = ? THEN 0 ELSE 1 END
            LIMIT ?""",
-        [like, like, like, like, q, q, q, limit * 2],
+        [like, like, like, like, limit * 2],
     ).fetchall()
     for r in like_rows:
-        if r["id"] not in seen:
-            seen.add(r["id"])
-            rows.append(r["id"])
+        add(r["id"])
 
-    # alias search
-    alias_rows = conn.execute(
+    # 3. alias substring matches
+    for r in conn.execute(
         """SELECT DISTINCT a.digimon_id FROM digimon_alias a
            WHERE a.alias LIKE ? COLLATE NOCASE LIMIT ?""",
         [like, limit * 2],
-    ).fetchall()
-    for r in alias_rows:
-        if r["digimon_id"] not in seen:
-            seen.add(r["digimon_id"])
-            rows.append(r["digimon_id"])
+    ).fetchall():
+        add(r["digimon_id"])
 
-    if not rows:
-        return []
+    # 4. FTS only for Latin queries (CJK tokenization is too broad)
+    if not _has_cjk(q):
+        try:
+            fts_phrase = q.replace('"', " ")
+            fts_rows = conn.execute(
+                """SELECT d.id FROM digimon_fts f JOIN digimon d ON d.id = f.rowid
+                   WHERE digimon_fts MATCH ? ORDER BY bm25(digimon_fts) LIMIT ?""",
+                [fts_phrase, limit * 2],
+            ).fetchall()
+            for r in fts_rows:
+                add(r["id"])
+        except sqlite3.OperationalError:
+            pass  # malformed FTS query — fine
+
     out = []
-    for digimon_id in rows[: limit * 2]:
+    for digimon_id in rows[:limit]:
         d = get_digimon(conn, digimon_id)
         if d:
             out.append(d)

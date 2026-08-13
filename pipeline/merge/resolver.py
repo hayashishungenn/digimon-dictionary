@@ -101,6 +101,37 @@ class EvolutionResolver:
         # digimons_net / digidb reference by name
         return self._names.get(naming.normalize_key(ref))
 
+    def _upsert_edge(self, from_id: int, to_id: int, etype: str, cond: str | None,
+                     source: str, is_primary: bool = False) -> None:
+        """Insert an evolution edge, consolidating cross-source duplicates.
+
+        The same evolution (from, to, type) reported by digi-api AND Wikimon is
+        one edge; its `source` column lists every reporting source.
+        """
+        existing = self.conn.execute(
+            """SELECT id, source, condition, is_primary_line FROM evolution_edge
+               WHERE from_digimon_id=? AND to_digimon_id=? AND evolution_type=?""",
+            [from_id, to_id, etype],
+        ).fetchone()
+        if existing:
+            sources = set((existing["source"] or "").split(",")) | {source}
+            self.conn.execute(
+                """UPDATE evolution_edge SET source=?, condition=COALESCE(?, condition),
+                       is_primary_line = MAX(is_primary_line, ?)
+                   WHERE id=?""",
+                [",".join(sorted(s for s in sources if s)), cond or None,
+                 1 if is_primary else 0, existing["id"]],
+            )
+        else:
+            self.conn.execute(
+                """INSERT INTO evolution_edge
+                   (from_digimon_id, to_digimon_id, evolution_type, condition, source,
+                    confidence, is_primary_line)
+                   VALUES(?,?,?,?,?,?,?)""",
+                [from_id, to_id, etype, cond or None, source, "medium",
+                 1 if is_primary else 0],
+            )
+
     def add_edges_for_entity(self, entity: MatchedEntity) -> int:
         """Write all evolution edges described by an entity's records."""
         added = 0
@@ -108,6 +139,8 @@ class EvolutionResolver:
         if from_id is None:
             return 0
         for rec in entity.records:
+            primary_to = set(rec.extra.get("primary_to", []) or [])
+            primary_from = set(rec.extra.get("primary_from", []) or [])
             for ref in rec.evolves_to:
                 if _is_junk_evo(ref):
                     continue
@@ -116,12 +149,8 @@ class EvolutionResolver:
                     continue
                 cond = rec.conditions.get(f"to:{ref}") or ""
                 etype = _guess_evolution_type(cond) if cond else "normal"
-                self.conn.execute(
-                    """INSERT OR IGNORE INTO evolution_edge
-                       (from_digimon_id, to_digimon_id, evolution_type, condition, source, confidence)
-                       VALUES(?,?,?,?,?,?)""",
-                    [from_id, to_id, etype, cond or None, rec.source, "medium"],
-                )
+                self._upsert_edge(from_id, to_id, etype, cond or None, rec.source,
+                                  is_primary=ref in primary_to)
                 added += 1
             for ref in rec.evolves_from:
                 if _is_junk_evo(ref):
@@ -131,12 +160,8 @@ class EvolutionResolver:
                     continue
                 cond = rec.conditions.get(f"from:{ref}") or ""
                 etype = _guess_evolution_type(cond) if cond else "normal"
-                self.conn.execute(
-                    """INSERT OR IGNORE INTO evolution_edge
-                       (from_digimon_id, to_digimon_id, evolution_type, condition, source, confidence)
-                       VALUES(?,?,?,?,?,?)""",
-                    [to_id, from_id, etype, cond or None, rec.source, "medium"],
-                )
+                self._upsert_edge(to_id, from_id, etype, cond or None, rec.source,
+                                  is_primary=ref in primary_from)
                 added += 1
         return added
 

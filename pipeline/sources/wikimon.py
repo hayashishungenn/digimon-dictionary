@@ -53,29 +53,32 @@ class WikimonAdapter(SourceAdapter):
 
     # ------------------------------------------------------------ enumeration
     def _all_pages(self, fetcher: Any) -> list[str]:
-        """Enumerate all article titles in the main namespace."""
+        """Enumerate digimon page titles via Category:Digimon (≈1,650 members).
+
+        allpages over the whole wiki returns ~14,000 articles (attacks, items,
+        games, ...) — far too noisy. Category:Digimon is the precise set.
+        """
         titles: list[str] = []
-        apfrom = ""
+        cmcontinue = ""
         while True:
             params = {
                 "action": "query",
-                "list": "allpages",
-                "aplimit": 500,
-                "apfilterredir": "nonredirects",
+                "list": "categorymembers",
+                "cmtitle": "Category:Digimon",
+                "cmlimit": 500,
                 "format": "json",
             }
-            if apfrom:
-                params["apfrom"] = apfrom
+            if cmcontinue:
+                params["cmcontinue"] = cmcontinue
             payload = fetcher.get_json(WIKIMON_API, params=params)
-            pages = payload.get("query", {}).get("allpages", [])
-            for p in pages:
-                titles.append(p["title"])
+            members = payload.get("query", {}).get("categorymembers", [])
+            for m in members:
+                titles.append(m.get("title", ""))
             cont = payload.get("continue")
-            if not cont:
+            if not cont or not cont.get("cmcontinue"):
                 break
-            apfrom = cont.get("apfrom", "")
-            if not apfrom:
-                break
+            cmcontinue = cont["cmcontinue"]
+        titles = [t for t in titles if t]
         save_raw("wikimon", "all_pages", titles, meta={"source_url": WIKIMON_API, "count": len(titles)})
         return titles
 
@@ -220,9 +223,12 @@ class WikimonAdapter(SourceAdapter):
                     continue
                 is_primary = bool(re.match(r"\*\s*'{2,}", bullet))
                 cond = ""
-                # condition inside parentheses after the link
+                # condition lives in the FIRST parenthesized group BEFORE any
+                # {{template}}/ref markup (refs like "{{rfc|BT12|059 (DCG)}}"
+                # contain "(DCG)" which is not an evolution condition)
                 after = bullet[m.end():]
-                cm = re.search(r"\((.*?)\)", after)
+                pre = after.split("{{")[0]
+                cm = re.search(r"\((.*?)\)", pre)
                 if cm:
                     cond = cm.group(1).strip()
                 if direction == "from":

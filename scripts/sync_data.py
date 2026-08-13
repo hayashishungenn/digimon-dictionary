@@ -153,7 +153,10 @@ def main(argv: list[str] | None = None) -> int:
         store.commit()
         logger.info("digimon rows written")
 
-        # 4. resolve evolution edges + relations
+        # 4. resolve evolution edges + relations (rebuilt from records each run)
+        conn.execute("DELETE FROM evolution_edge")
+        conn.execute("DELETE FROM digimon_relation")
+        conn.commit()
         resolver = EvolutionResolver(conn)
         edge_count = 0
         rel_count = 0

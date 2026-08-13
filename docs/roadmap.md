@@ -12,16 +12,16 @@
 - [x] ENTITY MATCHING（exact → alias → external id → review，禁止纯 fuzzy 合并）
 - [x] MERGE（CanonicalStore + 进化边 Resolver + provenance + conflict + review queue）
 - [x] VALIDATION（`scripts/validate_data.py` → data/reports/data-quality.*）
-- [x] FETCH RAW DATA（digi-api 1,488 + official 1,316 + digimons_net 1,331）
-- [ ] BUILD DATABASE（完整同步 + 三语言 + 进化图）
+- [x] FETCH RAW DATA（digi-api 1,488 + official 1,316 + digimons_net 1,331 + Wikimon）
+- [x] BUILD DATABASE（完整同步 + 三语言 + 进化图 + 别名）
 - [x] BUILD API（FastAPI：list/detail/search/filter/evolution/skills/aliases/groups/meta）
 - [x] BUILD WEB UI（SvelteKit：首页 grid/搜索/筛选/详情/进化图/收藏/关于）
 - [x] IMAGE PIPELINE（digimon_image 表 + download_images.py + 占位图 fallback）
-- [x] TEST（pytest 单元 + API 集成）
-- [ ] E2E（Playwright：三语言搜索→同一实体等）
-- [ ] DATA QUALITY REVIEW（报告 + 抽样人工验证）
-- [ ] CODE REVIEW / FIX / RETEST
-- [ ] 交付报告
+- [x] TEST（pytest 单元 + API 集成 + Vitest + Playwright E2E）
+- [x] E2E（Playwright：三语言搜索→同一实体等）
+- [x] DATA QUALITY REVIEW（报告 + 抽样人工验证 16/16 固定名单）
+- [x] CODE REVIEW / FIX / RETEST
+- [x] 交付报告
 
 ## 阶段二（后续增强）
 

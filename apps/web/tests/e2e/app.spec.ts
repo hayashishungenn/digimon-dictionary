@@ -19,29 +19,27 @@ test('search 亚古兽 finds Agumon and opens the same entity as アグモン / 
 	await page.goto('/');
 	const search = page.getByRole('textbox', { name: '搜索数码兽' });
 
-	await search.fill('亚古兽');
-	await expect(page.getByText('亚古兽', { exact: true }).first()).toBeVisible();
-	// click the matching card
-	await page.locator('[data-testid="digimon-card"]').filter({ hasText: '亚古兽' }).first().click();
-	await page.waitForURL(/\/digimon\//);
-	const slugAfterZh = page.url().split('/').pop();
+	// search in all three languages and assert the FIRST result resolves to the
+	// same canonical entity (spec §62: same entity across languages)
+	async function firstSlug(term: string): Promise<string> {
+		await search.fill(term);
+		const card = page.locator('[data-testid="digimon-card"]').first();
+		await expect(card).toBeVisible();
+		const href = await card.locator('a.card-link').getAttribute('href');
+		return href ?? '';
+	}
+
+	const zhSlug = await firstSlug('亚古兽');
+	const enSlug = await firstSlug('Agumon');
+	const jaSlug = await firstSlug('アグモン');
+	expect(zhSlug).toBeTruthy();
+	expect(zhSlug).toBe(enSlug);
+	expect(zhSlug).toBe(jaSlug);
+
+	// the canonical base Agumon entity must carry all three names on detail
+	await page.goto(zhSlug);
 	await expect(page.locator('.detail-h1')).toContainText('亚古兽');
-
-	// now search in English
-	await page.goto('/');
-	await search.fill('Agumon');
-	await expect(page.locator('[data-testid="digimon-card"]').filter({ hasText: 'Agumon' }).first()).toBeVisible();
-	await page.locator('[data-testid="digimon-card"]').filter({ hasText: 'Agumon' }).first().click();
-	await page.waitForURL(/\/digimon\//);
-	expect(page.url().split('/').pop()).toBe(slugAfterZh);
-
-	// and in Japanese
-	await page.goto('/');
-	await search.fill('アグモン');
-	await expect(page.locator('[data-testid="digimon-card"]').filter({ hasText: 'アグモン' }).first()).toBeVisible();
-	await page.locator('[data-testid="digimon-card"]').filter({ hasText: 'アグモン' }).first().click();
-	await page.waitForURL(/\/digimon\//);
-	expect(page.url().split('/').pop()).toBe(slugAfterZh);
+	await expect(page.locator('.detail-sub')).toContainText('Agumon');
 });
 
 test('detail page shows trilingual names and skills', async ({ page }) => {
