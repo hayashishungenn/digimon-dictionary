@@ -5,9 +5,16 @@ reach into the pipeline tables directly.
 """
 from __future__ import annotations
 
-import json
+import logging
 import sqlite3
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def _escape_like(text: str) -> str:
+    """Escape LIKE wildcards so user input is never a full-table wildcard (T5.5)."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -329,6 +336,13 @@ def get_evolution(conn: sqlite3.Connection, digimon_id: int, depth: int = 1) -> 
 
 
 def get_relations(conn: sqlite3.Connection, digimon_id: int) -> list[dict[str, Any]]:
+    """Relations in both directions with explicit direction/from_id/to_id.
+
+    ``to_id`` stays the *other* digimon for backward compatibility with earlier
+    clients; ``direction`` ('out'|'in') and the explicit ``from_id``/``to_id``
+    let a client present the graph without guessing (T5.8).
+    """
+    out: list[dict[str, Any]] = []
     rows = conn.execute(
         """SELECT r.relation_type, r.source, r.note, d2.id AS to_id, d2.canonical_slug,
                   d2.name_zh_cn, d2.name_en
@@ -336,16 +350,25 @@ def get_relations(conn: sqlite3.Connection, digimon_id: int) -> list[dict[str, A
            WHERE r.from_digimon_id = ? ORDER BY r.relation_type""",
         [digimon_id],
     ).fetchall()
-    out = [dict(r) for r in rows]
+    for r in rows:
+        item = dict(r)
+        item["direction"] = "out"
+        item["from_id"] = digimon_id
+        out.append(item)
     # also include reverse relations (things pointing to this digimon)
     rev = conn.execute(
-        """SELECT r.relation_type, r.source, r.note, d1.id AS to_id, d1.canonical_slug,
+        """SELECT r.relation_type, r.source, r.note, d1.id AS other_id, d1.canonical_slug,
                   d1.name_zh_cn, d1.name_en
            FROM digimon_relation r JOIN digimon d1 ON d1.id = r.from_digimon_id
            WHERE r.to_digimon_id = ? AND r.from_digimon_id != ?""",
         [digimon_id, digimon_id],
     ).fetchall()
-    out.extend(dict(r) for r in rev)
+    for r in rev:
+        item = dict(r)
+        item["direction"] = "in"
+        item["from_id"] = item.pop("other_id")
+        item["to_id"] = digimon_id
+        out.append(item)
     return out
 
 
@@ -387,7 +410,6 @@ def search_digimon(
     query: str,
     *,
     limit: int = 30,
-    offset: int = 0,
 ) -> list[dict[str, Any]]:
     """Multilingual search: exact name → substring (LIKE) → aliases → FTS.
 
@@ -396,6 +418,10 @@ def search_digimon(
     semantics). We therefore use exact + LIKE matching for CJK queries and
     reserve FTS for Latin queries (where tokenization is helpful). Exact-name
     matches always rank first.
+
+    User input is never treated as a SQL wildcard: `%` and `_` are escaped so
+    arbitrary input cannot become a full-table scan (T5.5). The public contract
+    has no pagination offset for keyword search (T5.4).
     """
     q = query.strip()
     if not q:
@@ -434,13 +460,14 @@ def search_digimon(
         ).fetchall():
             add(r["digimon_id"])
 
-    # 2. substring (LIKE) matches across primary names (all variants)
+    # 2. substring (LIKE) matches across primary names (all variants), with
+    #    user `%`/`_` escaped so they never act as wildcards.
     like_params: list[str] = []
     like_where: list[str] = []
     for v in variants:
-        lv = f"%{v}%"
+        lv = f"%{_escape_like(v)}%"
         for col in ("name_zh_cn", "name_en", "name_ja", "name_romanized"):
-            like_where.append(f"{col} LIKE ? COLLATE NOCASE")
+            like_where.append(f"{col} LIKE ? ESCAPE '\\' COLLATE NOCASE")
             like_params.append(lv)
     like_rows = conn.execute(
         f"""SELECT id FROM digimon WHERE {' OR '.join(like_where)} LIMIT ?""",
@@ -450,8 +477,8 @@ def search_digimon(
         add(r["id"])
 
     # 3. alias substring matches (all variants)
-    alias_where = " OR ".join(["a.alias LIKE ? COLLATE NOCASE"] * len(variants))
-    alias_params = [f"%{v}%" for v in variants]
+    alias_where = " OR ".join(["a.alias LIKE ? ESCAPE '\\' COLLATE NOCASE"] * len(variants))
+    alias_params = [f"%{_escape_like(v)}%" for v in variants]
     for r in conn.execute(
         f"""SELECT DISTINCT a.digimon_id FROM digimon_alias a
             WHERE {alias_where} LIMIT ?""",
@@ -459,7 +486,8 @@ def search_digimon(
     ).fetchall():
         add(r["digimon_id"])
 
-    # 4. FTS only for Latin queries (CJK tokenization is too broad)
+    # 4. FTS only for Latin queries (CJK tokenization is too broad). A malformed
+    #    FTS query falls back to the LIKE results above — observably, not silently.
     if not _has_cjk(q):
         try:
             fts_phrase = q.replace('"', " ")
@@ -470,8 +498,8 @@ def search_digimon(
             ).fetchall()
             for r in fts_rows:
                 add(r["id"])
-        except sqlite3.OperationalError:
-            pass  # malformed FTS query — fine
+        except sqlite3.OperationalError as exc:
+            logger.warning("FTS query %r failed; falling back to LIKE results: %s", q, exc)
 
     out = []
     for digimon_id in rows[:limit]:

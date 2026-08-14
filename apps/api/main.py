@@ -5,27 +5,56 @@ Database access is read-only via SQLite.
 """
 from __future__ import annotations
 
+import logging
 import os
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from pipeline.core.config import DB_PATH
 from pipeline.core.enums import Attribute, Level
 from pipeline.core.schema import connect_readonly
 
 from . import queries
 
+logger = logging.getLogger(__name__)
+
 # Resolve DB path: allow override via DIGIDEX_DB env var (tests use a fixture).
 # This file is at <root>/apps/api/main.py -> parents[2] is the repo root.
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "digidex.sqlite"
 
+# Local development origins. Never a permanent wildcard — see _cors_origins().
+DEFAULT_CORS_ORIGINS = ["http://localhost:5173", "http://localhost:4173"]
+
 
 def _db_path() -> Path:
     return Path(os.environ.get("DIGIDEX_DB", str(DEFAULT_DB_PATH)))
+
+
+def _cors_origins() -> list[str]:
+    """CORS allow-list from DIGIDEX_CORS_ORIGINS (comma-separated).
+
+    - Unset: explicit localhost dev origins (no wildcard).
+    - Set: use exactly those origins.
+    - A literal "*" is refused unless DIGIDEX_ENV=development — the default
+      posture never allows arbitrary origins (T5.2).
+    """
+    env = os.environ.get("DIGIDEX_ENV", "").lower()
+    raw = os.environ.get("DIGIDEX_CORS_ORIGINS", "").strip()
+    if not raw:
+        return list(DEFAULT_CORS_ORIGINS)
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    if "*" in origins and env != "development":
+        logger.warning(
+            "DIGIDEX_CORS_ORIGINS contains '*' but DIGIDEX_ENV is not 'development'; "
+            "refusing wildcard CORS"
+        )
+        return list(DEFAULT_CORS_ORIGINS)
+    return origins
 
 
 @asynccontextmanager
@@ -38,7 +67,7 @@ app = FastAPI(title="DigiDex API", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # local dev; tighten before deployment
+    allow_origins=_cors_origins(),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -52,15 +81,29 @@ def _db() -> Any:
     return connect_readonly(db)
 
 
+# Stable error responses: never leak absolute paths or SQLite internals (T5.10).
+@app.exception_handler(sqlite3.Error)
+async def _sqlite_error_handler(request, exc):
+    logger.warning("sqlite error on %s: %s", request.url.path, exc)
+    return JSONResponse(status_code=500, content={"detail": "database query failed"})
+
+
+@app.exception_handler(Exception)
+async def _generic_error_handler(request, exc):
+    logger.warning("unhandled error on %s: %r", request.url.path, exc)
+    return JSONResponse(status_code=500, content={"detail": "internal server error"})
+
+
 # --------------------------------------------------------------------------
 # meta
 # --------------------------------------------------------------------------
 @app.get("/api/health")
 def health() -> dict[str, Any]:
+    # Deliberately no db_path / absolute filesystem info (T5.1).
     return {
         "ok": True,
         "db_ready": _db_path().exists(),
-        "db_path": str(_db_path()),
+        "service": "digidex-api",
     }
 
 
