@@ -11,15 +11,13 @@ import hashlib
 import json
 import logging
 import sqlite3
-from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from pipeline.core import naming
 from pipeline.core.enums import (
     AliasType,
-    Attribute,
-    DataSource,
-    Level,
     NameStatus,
     parse_attribute,
     parse_level,
@@ -37,9 +35,23 @@ _STATUS_RANK = {
     NameStatus.UNVERIFIED: 0,
 }
 
+# Documented canonical priority for world-view fields (level/attribute/profile/
+# first appearance/name origin) when multiple sources disagree — per product
+# spec §14 the official Reference Book is authoritative, then Wikimon, then
+# digi-api, then community sites. Image selection uses a separate documented
+# order (see _pick_main_image). Never "first source in input order".
+SOURCE_PRIORITY = {
+    "official": 4,
+    "wikimon": 3,
+    "dapi": 2,
+    "manual": 2,
+    "digimons_net": 1,
+    "digidb": 0,
+}
+
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _pick_name(names: list[SourceName], language: str) -> SourceName | None:
@@ -155,16 +167,80 @@ class CanonicalStore:
 
         for rec in records:
             self._merge_names(digimon_id, rec)
-            self._merge_attributes(digimon_id, rec)
             self._merge_types(digimon_id, rec)
             self._merge_fields(digimon_id, rec)
             self._merge_groups(digimon_id, rec)
             self._merge_skills(digimon_id, rec)
-            self._merge_profile(digimon_id, rec)
             self._merge_image(digimon_id, rec)
-            self._merge_first_appearance(digimon_id, rec)
-            self._merge_name_origin(digimon_id, rec)
+        # profile / first appearance / name origin are single-valued fields:
+        # they are merged by documented source priority, not input order.
+        self._merge_profiles(digimon_id, records)
+        self._merge_first_appearance(digimon_id, records)
+        self._merge_name_origin(digimon_id, records)
         return digimon_id
+
+    # ---- canonical value selection (documented source priority) ------------
+    @staticmethod
+    def _field_candidates(entity: MatchedEntity, raw_fn: Callable[[SourceDigimon], str]) -> list[tuple[str, str, str]]:
+        """[(canonical_value, source, source_id), ...] for a world-view field."""
+        out: list[tuple[str, str, str]] = []
+        for r in entity.records:
+            if not r:
+                continue
+            raw = raw_fn(r)
+            if not raw:
+                continue
+            out.append((raw, r.source, r.source_id))
+        return out
+
+    @staticmethod
+    def _pick_canonical(candidates: list[tuple[str, str, str]], default: str = "unknown"):
+        """Pick the canonical value by SOURCE_PRIORITY (never input order).
+
+        Returns ``(value, choice)``. ``choice`` is None when there is no
+        concrete value, otherwise a dict with value/source/source_id/candidates/
+        reason/needs_review. A tie between distinct values at the same top
+        priority is left unresolved (needs_review=True) rather than guessed.
+        """
+        concrete = [(v, s, sid) for v, s, sid in candidates if v and v != "unknown"]
+        if not concrete:
+            return default, None
+        ranked: dict[str, dict[str, Any]] = {}
+        for v, s, sid in concrete:
+            prio = SOURCE_PRIORITY.get(s, 0)
+            if v not in ranked or prio > ranked[v]["prio"]:
+                ranked[v] = {"prio": prio, "source": s, "source_id": sid}
+        top_prio = max(r["prio"] for r in ranked.values())
+        top_values = [v for v, r in ranked.items() if r["prio"] == top_prio]
+        candidates_json = [{"value": v, "source": s, "source_id": sid} for v, s, sid in concrete]
+        if len(top_values) > 1:
+            reason = f"equal source priority {top_prio} between {sorted(top_values)}; manual review required"
+            return default, {
+                "value": None, "source": None, "source_id": None,
+                "candidates": candidates_json, "reason": reason, "needs_review": True,
+            }
+        v = top_values[0]
+        reason = f"source priority: {ranked[v]['source']} (priority {top_prio})"
+        return v, {
+            "value": v, "source": ranked[v]["source"], "source_id": ranked[v]["source_id"],
+            "candidates": candidates_json, "reason": reason, "needs_review": False,
+        }
+
+    @staticmethod
+    def _source_last_updated(entity: MatchedEntity) -> str:
+        """Best source timestamp across records; falls back to retrieved_at.
+
+        A real source-provided update time is never blindly overwritten with
+        the current clock. When the source does not report its own timestamp,
+        the fetch time (retrieved_at) is used instead.
+        """
+        stamps = [
+            r.extra.get("source_last_updated") or r.extra.get("source_updated_at")
+            or r.extra.get("fetch_date")
+            for r in entity.records if r
+        ]
+        stamps = [s for s in stamps if s]
+        return max(stamps) if stamps else _now()
 
     # ---- digimon row ------------------------------------------------------
     def _upsert_digimon_row(self, entity: MatchedEntity) -> int:
@@ -182,21 +258,22 @@ class CanonicalStore:
         zh_tw = _pick_name([n for r in entity.records if r for n in r.names], "zh_tw")
         en_dub = _pick_name([n for r in entity.records if r for n in r.names], "en_dub")
 
-        levels = [parse_level(r.level_raw or r.level) for r in entity.records if r.level or r.level_raw]
-        attrs = [parse_attribute(r.attribute_raw or r.attribute) for r in entity.records if r.attribute or r.attribute_raw]
+        # canonical world-view values selected by documented source priority;
+        # every candidate and its real source/source_id is kept for auditing.
+        levels = self._field_candidates(
+            entity, lambda r: parse_level(r.level_raw or r.level).value
+        )
+        attrs = self._field_candidates(
+            entity, lambda r: parse_attribute(r.attribute_raw or r.attribute).value
+        )
+        level_value, level_choice = self._pick_canonical(levels)
+        attr_value, attr_choice = self._pick_canonical(attrs)
+
         xab = any(r.x_antibody for r in entity.records if r.x_antibody is not None)
         is_official = any(r.is_official is True for r in entity.records if r.is_official is not None)
 
-        # conflict detection: differing REAL canonical values across sources
-        # ("unknown"/placeholders are not disagreements). Recorded after the
-        # row id is known so conflicts link to the entity.
-        self._conflict_values = (entity, levels, attrs)
-
-        # pick the first non-unknown value (concrete data > placeholder)
-        level_value = next((lv.value for lv in levels if lv != Level.UNKNOWN), "unknown")
-        level_raw = next((r.level_raw or r.level for r in entity.records if r.level_raw or r.level), None)
-        attr_value = next((a.value for a in attrs if a != Attribute.UNKNOWN), "unknown")
-        attr_raw = next((r.attribute_raw or r.attribute for r in entity.records if r.attribute_raw or r.attribute), None)
+        level_raw = next((r.level_raw or r.level for r in entity.records if r and (r.level_raw or r.level)), None)
+        attr_raw = next((r.attribute_raw or r.attribute for r in entity.records if r and (r.attribute_raw or r.attribute)), None)
         level_2 = next((r.extra.get("level_2") for r in entity.records if r.extra.get("level_2")), None)
 
         # external ids
@@ -210,6 +287,16 @@ class CanonicalStore:
 
         # content hash (for incremental detection)
         content_hash = self._content_hash(entity)
+        source_last_updated = self._source_last_updated(entity)
+
+        # zh name "verified" reflects the chosen status on both INSERT and
+        # UPDATE (previously only INSERT set it — T2.8).
+        zh_verified = int(
+            bool(zh) and NameStatus(zh.status) in (
+                NameStatus.OFFICIAL, NameStatus.OFFICIAL_GAME,
+                NameStatus.OFFICIAL_ANIME, NameStatus.COMMUNITY,
+            )
+        )
 
         if row:
             digimon_id = row["id"]
@@ -218,6 +305,7 @@ class CanonicalStore:
                     canonical_slug=?, name_zh_cn=COALESCE(?, name_zh_cn),
                     name_zh_cn_source=COALESCE(?, name_zh_cn_source),
                     name_zh_cn_status=COALESCE(?, name_zh_cn_status),
+                    name_zh_cn_verified=CASE WHEN ? IS NOT NULL THEN ? ELSE name_zh_cn_verified END,
                     name_en=COALESCE(?, name_en), name_ja=COALESCE(?, name_ja),
                     name_romanized=COALESCE(?, name_romanized),
                     name_zh_hk=COALESCE(?, name_zh_hk), name_zh_tw=COALESCE(?, name_zh_tw),
@@ -233,14 +321,16 @@ class CanonicalStore:
                 WHERE id=?""",
                 [
                     slug, zh.value if zh else None, zh.source if zh else None,
-                    zh.status if zh else None, en.value if en else None, ja.value if ja else None,
+                    zh.status if zh else None,
+                    zh.value if zh else None, zh_verified,
+                    en.value if en else None, ja.value if ja else None,
                     rom.value if rom else None, zh_hk.value if zh_hk else None,
                     zh_tw.value if zh_tw else None, en_dub.value if en_dub else None,
                     level_value, level_raw, level_2, attr_value, attr_raw,
                     1 if xab else 0, 1 if is_official else 0,
                     image.main if image else None, image.thumb if image else None,
                     dapi_id, wikimon_title, official_slug, digimons_net_slug,
-                    content_hash, now, now, 0 if is_official else 1,
+                    content_hash, source_last_updated, now, 0 if is_official else 1,
                     digimon_id,
                 ],
             )
@@ -256,8 +346,7 @@ class CanonicalStore:
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 [
                     slug, zh.value if zh else None, zh.source if zh else None,
-                    zh.status if zh else None,
-                    1 if zh and NameStatus(zh.status) in (NameStatus.OFFICIAL, NameStatus.COMMUNITY) else 0,
+                    zh.status if zh else None, zh_verified,
                     zh_hk.value if zh_hk else None, zh_tw.value if zh_tw else None,
                     en.value if en else None, en_dub.value if en_dub else None,
                     ja.value if ja else None, rom.value if rom else None,
@@ -265,21 +354,27 @@ class CanonicalStore:
                     1 if xab else 0, 1 if is_official else 0, 0 if is_official else 1,
                     image.main if image else None, image.thumb if image else None,
                     dapi_id, wikimon_title, official_slug, digimons_net_slug,
-                    content_hash, now, now,
+                    content_hash, source_last_updated, now,
                 ],
             )
             digimon_id = cur.lastrowid
 
-        # provenance for core fields
-        self._prov("digimon", digimon_id, "names", entity)
-        self._prov("digimon", digimon_id, "level", entity, {"value": level_value})
-        self._prov("digimon", digimon_id, "attribute", entity, {"value": attr_value})
-        self._prov("digimon", digimon_id, "is_official_reference", entity, {"value": is_official})
+        # provenance for core fields (value_hash = hash of the actual value)
+        names_value = {
+            "zh_cn": zh.value if zh else None,
+            "en": en.value if en else None,
+            "ja": ja.value if ja else None,
+        }
+        self._prov("digimon", digimon_id, "names", entity, value=names_value)
+        self._prov("digimon", digimon_id, "level", entity, value=level_value)
+        self._prov("digimon", digimon_id, "attribute", entity, value=attr_value)
+        self._prov("digimon", digimon_id, "is_official_reference", entity, value=is_official)
+        if image and image.main:
+            self._prov("digimon", digimon_id, "main_image", entity, value=image.main)
 
         # record real cross-source disagreements now that the id is known
-        entity, levels, attrs = self._conflict_values
-        self._record_value_conflicts("digimon", digimon_id, entity, "level", levels)
-        self._record_value_conflicts("digimon", digimon_id, entity, "attribute", attrs)
+        self._record_value_conflicts("digimon", digimon_id, "level", levels, level_choice)
+        self._record_value_conflicts("digimon", digimon_id, "attribute", attrs, attr_choice)
         return digimon_id
 
     def _pick_main_image(self, records: list[SourceDigimon]) -> Any:
@@ -360,10 +455,6 @@ class CanonicalStore:
             return AliasType.ALTERNATIVE_SPELLING.value
         return AliasType.OFFICIAL.value
 
-    def _merge_attributes(self, digimon_id: int, rec: SourceDigimon) -> None:
-        # level/attribute stored on digimon row; nothing extra here
-        pass
-
     def _merge_types(self, digimon_id: int, rec: SourceDigimon) -> None:
         for i, t in enumerate(rec.types):
             type_id = self._ensure_type(t)
@@ -399,17 +490,29 @@ class CanonicalStore:
                  1 if s.is_signature else 0, rec.source, i],
             )
 
-    def _merge_profile(self, digimon_id: int, rec: SourceDigimon) -> None:
+    def _merge_profiles(self, digimon_id: int, records: list[SourceDigimon]) -> None:
+        """Merge profile text per language by documented source priority."""
         for lang, col in (("zh_cn", "profile_zh_cn"), ("en", "profile_en"), ("ja", "profile_ja")):
-            text = (rec.profile.get(lang) or "").strip()
-            if not text:
+            best: tuple[str, SourceDigimon] | None = None
+            best_prio = -1
+            for r in records:
+                text = (r.profile.get(lang) or "").strip()
+                if not text:
+                    continue
+                prio = SOURCE_PRIORITY.get(r.source, 0)
+                if prio > best_prio:
+                    best = (text, r)
+                    best_prio = prio
+            if best is None:
                 continue
+            text, rec = best
             self.conn.execute(
-                f"UPDATE digimon SET {col} = COALESCE(?, {col}), profile_source = COALESCE(?, profile_source) "
+                "UPDATE digimon SET "
+                f"{col} = ?, profile_source = ?, profile_source_url = ? "
                 "WHERE id = ?",
-                [text, rec.source, digimon_id],
+                [text, rec.source, rec.extra.get("source_url"), digimon_id],
             )
-            self._prov("digimon", digimon_id, f"profile_{lang}", rec)
+            self._prov("digimon", digimon_id, f"profile_{lang}", rec, value=text)
 
     def _merge_image(self, digimon_id: int, rec: SourceDigimon) -> None:
         if not rec.image_url:
@@ -434,25 +537,52 @@ class CanonicalStore:
             [digimon_id, "main_image", rec.image_url, rec.image_page, local, status],
         )
 
-    def _merge_first_appearance(self, digimon_id: int, rec: SourceDigimon) -> None:
-        if rec.first_appearance_title:
+    def _merge_first_appearance(self, digimon_id: int, records: list[SourceDigimon]) -> None:
+        """Pick first-appearance fields from the highest-priority source."""
+        best_prio = -1
+        best: SourceDigimon | None = None
+        for r in records:
+            if not (r.first_appearance_title or r.first_appearance_date):
+                continue
+            prio = SOURCE_PRIORITY.get(r.source, 0)
+            if prio > best_prio:
+                best = r
+                best_prio = prio
+        if best is None:
+            return
+        if best.first_appearance_title:
             self.conn.execute(
                 "UPDATE digimon SET first_appearance_title = COALESCE(?, first_appearance_title), "
                 "first_appearance_medium = COALESCE(?, first_appearance_medium) WHERE id = ?",
-                [rec.first_appearance_title, rec.first_appearance_medium, digimon_id],
+                [best.first_appearance_title, best.first_appearance_medium, digimon_id],
             )
-        if rec.first_appearance_date:
+            self._prov("digimon", digimon_id, "first_appearance_title", best,
+                       value=best.first_appearance_title)
+        if best.first_appearance_date:
             self.conn.execute(
                 "UPDATE digimon SET first_appearance_date = COALESCE(?, first_appearance_date) WHERE id = ?",
-                [rec.first_appearance_date, digimon_id],
+                [best.first_appearance_date, digimon_id],
             )
+            self._prov("digimon", digimon_id, "first_appearance_date", best,
+                       value=best.first_appearance_date)
 
-    def _merge_name_origin(self, digimon_id: int, rec: SourceDigimon) -> None:
-        if rec.name_origin:
+    def _merge_name_origin(self, digimon_id: int, records: list[SourceDigimon]) -> None:
+        """Pick name origin from the highest-priority source that provides one."""
+        best_prio = -1
+        best: SourceDigimon | None = None
+        for r in records:
+            if not r.name_origin:
+                continue
+            prio = SOURCE_PRIORITY.get(r.source, 0)
+            if prio > best_prio:
+                best = r
+                best_prio = prio
+        if best and best.name_origin:
             self.conn.execute(
                 "UPDATE digimon SET name_origin = COALESCE(?, name_origin) WHERE id = ?",
-                [rec.name_origin, digimon_id],
+                [best.name_origin, digimon_id],
             )
+            self._prov("digimon", digimon_id, "name_origin", best, value=best.name_origin)
 
     # ---- evolution edges ---------------------------------------------------
     def add_edge(self, from_id: int, to_id: int, evolution_type: str = "normal",
@@ -478,39 +608,73 @@ class CanonicalStore:
 
     # ---- provenance / conflicts --------------------------------------------
     def _prov(self, entity_type: str, entity_id: int, field: str,
-              rec: SourceDigimon | MatchedEntity, extra: dict[str, Any] | None = None) -> None:
+              rec: SourceDigimon | MatchedEntity, *, value: Any = None,
+              source_url: str | None = None) -> None:
         if isinstance(rec, SourceDigimon):
             source = rec.source
-            url = rec.extra.get("source_url")
+            url = source_url or rec.extra.get("source_url")
         else:
             source = ",".join(sorted({r.source for r in rec.records if r}))
             url = None
+        # value_hash is the hash of the *normalized field value* itself, so a
+        # change in the value (not just the source metadata) is detectable.
+        value_hash = (
+            hashlib.sha256(json.dumps(value, default=str, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+            if value is not None else None
+        )
         self.conn.execute(
             """INSERT OR IGNORE INTO provenance
                (entity_type, entity_id, field, source, source_url, retrieved_at, confidence, value_hash)
                VALUES(?,?,?,?,?,?,?,?)""",
-            [entity_type, entity_id, field, source, url, _now(), "high",
-             json.dumps(extra, default=str) if extra else None],
+            [entity_type, entity_id, field, source, url, _now(), "high", value_hash],
         )
 
-    def _record_value_conflicts(self, entity_type: str, entity_id: int | None,
-                                entity: MatchedEntity, field: str, values: list[Any]) -> None:
-        # "unknown" placeholders are not real disagreements
-        distinct = list(dict.fromkeys(v.value for v in values if v is not None and v.value != "unknown"))
-        if len(distinct) <= 1:
+    def _record_value_conflicts(self, entity_type: str, entity_id: int, field: str,
+                                candidates: list[tuple[str, str, str]], choice: dict | None) -> None:
+        """Record a real cross-source disagreement, keeping every candidate.
+
+        ``candidates`` is [(canonical_value, source, source_id)]. "unknown"
+        placeholders are not disagreements. The chosen value/source comes from
+        the documented SOURCE_PRIORITY selection (never "first input source").
+        A tie that cannot be safely resolved is flagged review_status='review'
+        and also queued for manual review.
+        """
+        distinct: dict[str, dict[str, Any]] = {}
+        for v, s, sid in candidates:
+            if v is None or v == "unknown":
+                continue
+            prio = SOURCE_PRIORITY.get(s, 0)
+            if v not in distinct or prio > distinct[v]["prio"]:
+                distinct[v] = {"source": s, "source_id": sid, "prio": prio}
+        if len(distinct) < 2:
             return
-        # Different canonical values from different sources -> real conflict.
+        items = list(distinct.items())  # [(value, {source, source_id, prio})]
+        (va, ca), (vb, cb) = items[0], items[1]
+        resolution = choice["reason"] if choice else "unresolved"
+        review_status = "review" if (choice and choice["needs_review"]) else "auto"
         self.conn.execute(
-            """INSERT INTO data_conflict
-               (entity_type, entity_id, field, source_a, value_a, source_b, value_b, resolution)
-               VALUES(?,?,?,?,?,?,?,?)""",
+            """INSERT OR IGNORE INTO data_conflict
+               (entity_type, entity_id, field, source_a, source_id_a, value_a,
+                source_b, source_id_b, value_b, chosen_value, chosen_source,
+                candidates, review_status, resolution)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             [
                 entity_type, entity_id, field,
-                entity.records[0].source if entity.records else None, distinct[0],
-                entity.records[-1].source if entity.records else None, distinct[-1],
-                f"auto-resolved: picked {distinct[0]} (first source order)",
+                ca["source"], ca["source_id"], va,
+                cb["source"], cb["source_id"], vb,
+                choice["value"] if choice else None,
+                choice["source"] if choice else None,
+                json.dumps(choice["candidates"] if choice else [], ensure_ascii=False),
+                review_status, resolution,
             ],
         )
+        if review_status == "review":
+            self.queue_review(
+                entity_type, entity_id,
+                f"{field} conflict cannot be resolved by source priority",
+                {"field": field, "candidates": choice["candidates"] if choice else [],
+                 "reason": resolution},
+            )
 
     def queue_review(self, entity_type: str, entity_id: int | None, reason: str, detail: Any) -> None:
         self.conn.execute(

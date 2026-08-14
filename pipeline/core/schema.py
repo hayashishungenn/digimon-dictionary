@@ -11,9 +11,87 @@ Design decisions (per product spec docs/product-spec.md):
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+# ---------------------------------------------------------------------------
+# Schema versioning / migrations
+#
+# Every sync/export that opens a DB runs create_schema(), which creates the
+# base tables (idempotent) and then applies MIGRATIONS for any version ahead of
+# the DB's `PRAGMA user_version`. Migrations are additive and never drop or
+# destroy data — an old DB is upgraded in place, so existing rows survive.
+# ---------------------------------------------------------------------------
+SCHEMA_VERSION = 2
+
+
+def _migrate_v1(conn: sqlite3.Connection) -> None:
+    """Legacy v0 -> v1: tables predate version tracking.
+
+    Adds `digimon.level_2` for very old DBs and removes the synthetic
+    placeholder snapshot row (id=1 with NULL counts) that create_schema used to
+    insert — the snapshot table should only ever hold real snapshots.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(digimon)")}
+    if "level_2" not in cols:
+        conn.execute("ALTER TABLE digimon ADD COLUMN level_2 TEXT")
+    conn.execute(
+        """DELETE FROM snapshot
+           WHERE id = 1 AND total_count IS NULL
+             AND official_count IS NULL AND extended_count IS NULL"""
+    )
+
+
+def _migrate_v2(conn: sqlite3.Connection) -> None:
+    """v1 -> v2: audit-grade conflicts + dedup guarantees.
+
+    Extends `data_conflict` to record the real source *id* of every candidate,
+    the chosen value/source, all candidates as JSON, and a review status.
+    Also dedups `digimon_alias` and adds unique indexes so re-running merge
+    cannot insert duplicate aliases/conflicts.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(data_conflict)")}
+    for col, ddl in (
+        ("source_id_a", "ALTER TABLE data_conflict ADD COLUMN source_id_a TEXT"),
+        ("source_id_b", "ALTER TABLE data_conflict ADD COLUMN source_id_b TEXT"),
+        ("chosen_value", "ALTER TABLE data_conflict ADD COLUMN chosen_value TEXT"),
+        ("chosen_source", "ALTER TABLE data_conflict ADD COLUMN chosen_source TEXT"),
+        ("candidates", "ALTER TABLE data_conflict ADD COLUMN candidates TEXT"),
+        ("review_status", "ALTER TABLE data_conflict ADD COLUMN review_status TEXT NOT NULL DEFAULT 'auto'"),
+        ("resolved_at", "ALTER TABLE data_conflict ADD COLUMN resolved_at TEXT"),
+    ):
+        if col not in cols:
+            conn.execute(ddl)
+    # dedup aliases (keep the lowest id) before enforcing uniqueness
+    conn.execute(
+        """DELETE FROM digimon_alias WHERE id NOT IN (
+             SELECT MIN(id) FROM digimon_alias
+             GROUP BY digimon_id, alias, language
+           )"""
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_alias_unique "
+        "ON digimon_alias(digimon_id, alias, language)"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_conflict_entity_field "
+        "ON data_conflict(entity_type, entity_id, field)"
+    )
+
+
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    1: _migrate_v1,
+    2: _migrate_v2,
+}
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    ver = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    for v in range(ver + 1, SCHEMA_VERSION + 1):
+        mig = MIGRATIONS.get(v)
+        if mig is not None:
+            mig(conn)
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 SCHEMA_DDL: list[str] = [
     # ---- core entity -----------------------------------------------------
@@ -243,17 +321,24 @@ SCHEMA_DDL: list[str] = [
     """,
     """
     CREATE TABLE IF NOT EXISTS data_conflict (
-        id          INTEGER PRIMARY KEY,
-        entity_type TEXT NOT NULL,
-        entity_id   INTEGER,
-        field       TEXT NOT NULL,
-        source_a    TEXT,
-        value_a     TEXT,
-        source_b    TEXT,
-        value_b     TEXT,
-        resolution  TEXT,
-        resolved    INTEGER NOT NULL DEFAULT 0,
-        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        id            INTEGER PRIMARY KEY,
+        entity_type   TEXT NOT NULL,
+        entity_id     INTEGER,
+        field         TEXT NOT NULL,
+        source_a      TEXT,
+        source_id_a   TEXT,              -- source-local id of value_a's record
+        value_a       TEXT,
+        source_b      TEXT,
+        source_id_b   TEXT,              -- source-local id of value_b's record
+        value_b       TEXT,
+        chosen_value  TEXT,              -- canonical value selected by priority
+        chosen_source TEXT,
+        candidates    TEXT,              -- JSON: [{value, source, source_id}, ...]
+        review_status TEXT NOT NULL DEFAULT 'auto',  -- auto|review|resolved|wontfix
+        resolution    TEXT,              -- selection reason / how it was chosen
+        resolved      INTEGER NOT NULL DEFAULT 0,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        resolved_at   TEXT
     );
     """,
     """
@@ -348,16 +433,15 @@ SCHEMA_DDL: list[str] = [
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
-    """Create all tables + indexes if they do not exist."""
+    """Create the base tables (if missing) and apply any pending migrations.
+
+    Migrations run from the DB's current `PRAGMA user_version` up to
+    SCHEMA_VERSION. Existing databases are upgraded in place without data loss;
+    a fresh database runs every migration (each is a no-op on a new schema).
+    """
     for ddl in SCHEMA_DDL:
         conn.executescript(ddl)
-    # lightweight migrations for tables created before a column was added
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(digimon)")}
-    if "level_2" not in cols:
-        conn.execute("ALTER TABLE digimon ADD COLUMN level_2 TEXT")
-    conn.executescript(
-        "INSERT OR IGNORE INTO snapshot(id, snapshot_date) VALUES(1, datetime('now'));"
-    )
+    _apply_migrations(conn)
     conn.commit()
 
 

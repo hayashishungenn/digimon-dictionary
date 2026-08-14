@@ -9,7 +9,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import random
 import sys
 from pathlib import Path
 
@@ -114,6 +113,14 @@ def main(argv: list[str] | None = None) -> int:
 
     print()
     print(f"随机抽样通过 {ok}/{args.n}，固定名单通过 {fixed_ok}/{len(FIXED)}")
+    failed_random = args.n - ok
+    failed_fixed = len(FIXED) - fixed_ok
+    if failed_random or failed_fixed:
+        print(
+            f"VERIFICATION FAILED: {failed_random} random + {failed_fixed} fixed "
+            f"sample(s) have missing/failed fields (see [!!] above)"
+        )
+        return 1
     return 0
 
 

@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
         args.json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), "utf-8")
     ic = report["issue_counts"]
     print(f"issues: {ic['error']} errors / {ic['warning']} warnings / {ic['info']} info")
-    print(f"reports written: data/reports/data-quality.json, data/reports/data-quality.md")
+    print("reports written: data/reports/data-quality.json, data/reports/data-quality.md")
     return 1 if ic["error"] else 0
 
 

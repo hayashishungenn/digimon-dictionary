@@ -11,6 +11,14 @@ from pathlib import Path
 from typing import Any
 
 from pipeline.core.config import REPORTS_DIR
+from pipeline.core.enums import (
+    Attribute,
+    EvolutionType,
+    Level,
+    NameStatus,
+    RelationType,
+    SkillType,
+)
 from pipeline.core.schema import connect
 
 # Fixed digimon that must be spot-verified in every report (spec §63).
@@ -120,14 +128,43 @@ def validate(conn: sqlite3.Connection) -> dict[str, Any]:
                 f"{', '.join(m['canonical_slug'] for m in members)}",
             )
 
-    # --- orphan references ---------------------------------------------------
-    for tbl, _fk in (("digimon_skill", "skill_id"), ("digimon_alias", "digimon_id")):
+    # --- orphan references (every join table, both directions) ---------------
+    for tbl, fk_col in (
+        ("digimon_alias", "digimon_id"),
+        ("digimon_type", "digimon_id"),
+        ("digimon_field", "digimon_id"),
+        ("digimon_group", "digimon_id"),
+        ("digimon_skill", "digimon_id"),
+        ("digimon_image", "digimon_id"),
+        ("evolution_edge", "from_digimon_id"),
+        ("evolution_edge", "to_digimon_id"),
+        ("digimon_relation", "from_digimon_id"),
+        ("digimon_relation", "to_digimon_id"),
+        ("game_digimon_stats", "digimon_id"),
+        ("game_skill", "digimon_id"),
+    ):
         orphans = conn.execute(
-            f"""SELECT COUNT(*) FROM {tbl} o LEFT JOIN digimon d ON d.id = o.digimon_id
-                WHERE o.digimon_id IS NOT NULL AND d.id IS NULL"""
+            f"""SELECT COUNT(*) FROM {tbl} o
+                LEFT JOIN digimon d ON d.id = o.{fk_col}
+                WHERE o.{fk_col} IS NOT NULL AND d.id IS NULL"""
         ).fetchone()[0]
         if orphans:
-            issue("error", "orphan_relation", f"{orphans} orphan rows in {tbl}")
+            issue("error", "orphan_join", f"{orphans} orphan rows in {tbl}.{fk_col}")
+
+    # dangling lookup references (join -> type/field/group/skill)
+    for tbl, fk, ref in (
+        ("digimon_type", "type_id", "type"),
+        ("digimon_field", "field_id", "field"),
+        ("digimon_group", "group_id", "grp"),
+        ("digimon_skill", "skill_id", "skill"),
+        ("skill_alias", "skill_id", "skill"),
+    ):
+        orphans = conn.execute(
+            f"""SELECT COUNT(*) FROM {tbl} o LEFT JOIN {ref} t ON t.id = o.{fk}
+                WHERE o.{fk} IS NOT NULL AND t.id IS NULL"""
+        ).fetchone()[0]
+        if orphans:
+            issue("error", "orphan_reference", f"{orphans} rows in {tbl} reference missing {ref}")
 
     orphan_skills = conn.execute(
         """SELECT COUNT(*) FROM skill s
@@ -135,6 +172,112 @@ def validate(conn: sqlite3.Connection) -> dict[str, Any]:
     ).fetchone()[0]
     if orphan_skills:
         issue("info", "orphan_skill", f"{orphan_skills} skills not attached to any digimon")
+
+    # --- relation integrity ---------------------------------------------------
+    rel_bad_from = conn.execute(
+        """SELECT COUNT(*) FROM digimon_relation r
+           LEFT JOIN digimon d ON d.id = r.from_digimon_id WHERE d.id IS NULL"""
+    ).fetchone()[0]
+    if rel_bad_from:
+        issue("error", "broken_relation", f"{rel_bad_from} relations reference missing 'from' digimon")
+    rel_bad_to = conn.execute(
+        """SELECT COUNT(*) FROM digimon_relation r
+           LEFT JOIN digimon d ON d.id = r.to_digimon_id WHERE d.id IS NULL"""
+    ).fetchone()[0]
+    if rel_bad_to:
+        issue("error", "broken_relation", f"{rel_bad_to} relations reference missing 'to' digimon")
+    dup_rels = conn.execute(
+        """SELECT from_digimon_id, to_digimon_id, relation_type, COUNT(*) c
+           FROM digimon_relation GROUP BY from_digimon_id, to_digimon_id, relation_type HAVING c > 1"""
+    ).fetchall()
+    for r in dup_rels:
+        issue("warning", "duplicate_relation", f"relation {r[0]}->{r[1]} ({r[2]}) appears {r[3]}x")
+
+    # --- illegal enum / status values -----------------------------------------
+    VALID_ENUMS: list[tuple[str, str, set[str]]] = [
+        ("digimon", "level", {lv.value for lv in Level}),
+        ("digimon", "attribute", {a.value for a in Attribute}),
+        ("digimon", "name_zh_cn_status", {n.value for n in NameStatus}),
+        ("evolution_edge", "evolution_type", {e.value for e in EvolutionType}),
+        ("digimon_relation", "relation_type", {r.value for r in RelationType}),
+        ("digimon_skill", "skill_type", {s.value for s in SkillType}),
+        ("digimon_image", "download_status", {"pending", "downloaded", "missing", "failed"}),
+    ]
+    for tbl, col, valid in VALID_ENUMS:
+        ph = ",".join("?" * len(valid))
+        n = conn.execute(
+            f"SELECT COUNT(*) FROM {tbl} WHERE {col} IS NOT NULL AND {col} NOT IN ({ph})",
+            [*valid],
+        ).fetchone()[0]
+        if n:
+            issue("error", "invalid_enum", f"{n} rows in {tbl}.{col} have an invalid value")
+
+    # --- provenance ------------------------------------------------------------
+    missing_prov = conn.execute(
+        """SELECT COUNT(*) FROM digimon d
+           LEFT JOIN provenance p ON p.entity_type = 'digimon' AND p.entity_id = d.id
+           WHERE p.id IS NULL"""
+    ).fetchone()[0]
+    if missing_prov:
+        issue("warning", "missing_provenance", f"{missing_prov} digimon have no provenance row")
+
+    # --- source sync status ----------------------------------------------------
+    failed_syncs = conn.execute(
+        "SELECT source FROM source_sync WHERE status = 'failed'"
+    ).fetchall()
+    if failed_syncs:
+        issue("error", "source_sync_failed",
+              f"source sync failed for: {', '.join(r['source'] for r in failed_syncs)}")
+    if conn.execute("SELECT COUNT(*) FROM source_sync").fetchone()[0] == 0:
+        issue("warning", "source_sync_missing",
+              "source_sync table is empty — no per-source sync tracking recorded")
+
+    # --- FTS index vs digimon table -------------------------------------------
+    fts_n = conn.execute("SELECT COUNT(*) FROM digimon_fts").fetchone()[0]
+    digimon_n = conn.execute("SELECT COUNT(*) FROM digimon").fetchone()[0]
+    if fts_n != digimon_n:
+        issue("error", "fts_mismatch",
+              f"digimon_fts has {fts_n} rows but digimon has {digimon_n}")
+
+    # --- official/extended/total consistency + snapshot ------------------------
+    counts = conn.execute(
+        """SELECT
+             (SELECT COUNT(*) FROM digimon) AS total,
+             (SELECT COUNT(*) FROM digimon WHERE is_official_reference = 1) AS official,
+             (SELECT COUNT(*) FROM digimon WHERE is_extended = 1 AND is_official_reference = 0) AS extended"""
+    ).fetchone()
+    if counts["official"] + counts["extended"] != counts["total"]:
+        issue("error", "count_inconsistency",
+              f"official({counts['official']}) + extended({counts['extended']}) != total({counts['total']})")
+    snap = conn.execute(
+        "SELECT snapshot_date, official_count, extended_count, total_count FROM snapshot ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if snap is not None and (
+        snap["official_count"] != counts["official"]
+        or snap["extended_count"] != counts["extended"]
+        or snap["total_count"] != counts["total"]
+    ):
+        issue("error", "snapshot_stale",
+              f"latest snapshot ({snap['snapshot_date']}) counts {snap['official_count']}/"
+              f"{snap['extended_count']}/{snap['total_count']} do not match the database "
+              f"{counts['official']}/{counts['extended']}/{counts['total']}")
+    elif snap is None:
+        issue("warning", "snapshot_missing", "no snapshot row exists")
+
+    # --- manual review ----------------------------------------------------------
+    open_reviews = conn.execute(
+        "SELECT COUNT(*) FROM manual_review_queue WHERE status = 'open'"
+    ).fetchone()[0]
+    if open_reviews:
+        issue("info", "manual_review", f"{open_reviews} items await manual review")
+    # review_status is a T2-era column; pre-migration DBs skip this check
+    if "review_status" in {r[1] for r in conn.execute("PRAGMA table_info(data_conflict)")}:
+        unresolved_conflicts = conn.execute(
+            "SELECT COUNT(*) FROM data_conflict WHERE review_status = 'review' AND resolved = 0"
+        ).fetchone()[0]
+        if unresolved_conflicts:
+            issue("info", "unresolved_conflict",
+                  f"{unresolved_conflicts} conflicts await manual review")
 
     # --- images ---------------------------------------------------------------
     img_stats = conn.execute(
@@ -157,12 +300,22 @@ def validate(conn: sqlite3.Connection) -> dict[str, Any]:
               f"{img_pending} images not yet downloaded")
 
     # --- coverage --------------------------------------------------------------
-    def coverage(column: str) -> dict[str, int]:
+    # verified = sourced/checked name (official/community/...), present = any value.
+    # For en/ja there is no status column, so verified == present by definition.
+    def coverage(column: str, verified_col: str | None = None) -> dict[str, int]:
         total = conn.execute("SELECT COUNT(*) FROM digimon").fetchone()[0]
         have = conn.execute(
             f"SELECT COUNT(*) FROM digimon WHERE {column} IS NOT NULL AND TRIM({column}) != ''"
         ).fetchone()[0]
-        return {"total": total, "present": have, "pct": round(have / total * 100, 1) if total else 0}
+        if verified_col:
+            verified = conn.execute(
+                f"SELECT COUNT(*) FROM digimon WHERE {column} IS NOT NULL AND TRIM({column}) != '' "
+                f"AND {verified_col} IN ('official','official_game','official_anime','community')"
+            ).fetchone()[0]
+        else:
+            verified = have
+        return {"total": total, "present": have, "verified": verified,
+                "pct": round(have / total * 100, 1) if total else 0}
 
     zh_status = conn.execute(
         """SELECT name_zh_cn_status, COUNT(*) c FROM digimon
@@ -228,7 +381,7 @@ def validate(conn: sqlite3.Connection) -> dict[str, Any]:
             "info": sum(1 for i in issues if i["level"] == "info"),
         },
         "coverage": {
-            "zh_cn": coverage("name_zh_cn"),
+            "zh_cn": coverage("name_zh_cn", "name_zh_cn_status"),
             "en": coverage("name_en"),
             "ja": coverage("name_ja"),
             "zh_cn_status": zh_status_dict,
@@ -259,7 +412,8 @@ def to_markdown(report: dict[str, Any]) -> str:
     c = report["coverage"]
     lines.append(f"- 问题：{report['issue_counts']['error']} error / "
                  f"{report['issue_counts']['warning']} warning / {report['issue_counts']['info']} info")
-    lines.append(f"- 中文名覆盖率：{c['zh_cn']['present']}/{c['zh_cn']['total']} ({c['zh_cn']['pct']}%)")
+    lines.append(f"- 中文名覆盖率：{c['zh_cn']['present']}/{c['zh_cn']['total']} ({c['zh_cn']['pct']}%)"
+                 f"{f"，已验证 {c['zh_cn']['verified']}" if c['zh_cn']['verified'] != c['zh_cn']['present'] else ''}")
     lines.append(f"- 英文名覆盖率：{c['en']['present']}/{c['en']['total']} ({c['en']['pct']}%)")
     lines.append(f"- 日文名覆盖率：{c['ja']['present']}/{c['ja']['total']} ({c['ja']['pct']}%)")
     lines.append(f"- 图片（主图存在）：{c['images']['digimon_with_main_image']}；"
