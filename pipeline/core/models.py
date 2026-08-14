@@ -68,3 +68,94 @@ class MatchedEntity:
     confidence: str = "high"
     needs_review: bool = False
     review_reason: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Serialization (raw retention / offline candidate rebuild, T4)
+# ---------------------------------------------------------------------------
+def source_digimon_to_dict(rec: SourceDigimon) -> dict[str, Any]:
+    """Lossless serialization of a SourceDigimon to a plain dict.
+
+    Used to persist normalized records under data/raw/<source>/records.json so a
+    candidate can be rebuilt without re-fetching the network (T4.6).
+    """
+    return {
+        "source": rec.source,
+        "source_id": rec.source_id,
+        "names": [
+            {"value": n.value, "language": n.language, "status": n.status,
+             "source": n.source, "matchable": n.matchable}
+            for n in rec.names
+        ],
+        "level": rec.level,
+        "level_raw": rec.level_raw,
+        "attribute": rec.attribute,
+        "attribute_raw": rec.attribute_raw,
+        "types": list(rec.types),
+        "fields": list(rec.fields),
+        "groups": list(rec.groups),
+        "x_antibody": rec.x_antibody,
+        "profile": dict(rec.profile),
+        "skills": [
+            {"names": dict(s.names), "descriptions": dict(s.descriptions),
+             "skill_type": s.skill_type, "is_signature": s.is_signature, "source": s.source}
+            for s in rec.skills
+        ],
+        "evolves_to": list(rec.evolves_to),
+        "evolves_from": list(rec.evolves_from),
+        "conditions": dict(rec.conditions),
+        "first_appearance_title": rec.first_appearance_title,
+        "first_appearance_date": rec.first_appearance_date,
+        "first_appearance_medium": rec.first_appearance_medium,
+        "name_origin": rec.name_origin,
+        "image_url": rec.image_url,
+        "image_page": rec.image_page,
+        "is_official": rec.is_official,
+        "extra": dict(rec.extra),
+    }
+
+
+def source_digimon_from_dict(d: dict[str, Any]) -> SourceDigimon:
+    return SourceDigimon(
+        source=d["source"],
+        source_id=d["source_id"],
+        names=[SourceName(**n) for n in d.get("names", [])],
+        level=d.get("level"),
+        level_raw=d.get("level_raw"),
+        attribute=d.get("attribute"),
+        attribute_raw=d.get("attribute_raw"),
+        types=list(d.get("types", [])),
+        fields=list(d.get("fields", [])),
+        groups=list(d.get("groups", [])),
+        x_antibody=d.get("x_antibody"),
+        profile=dict(d.get("profile", {})),
+        skills=[
+            SourceSkill(names=dict(s.get("names", {})), descriptions=dict(s.get("descriptions", {})),
+                        skill_type=s.get("skill_type", "special_move"),
+                        is_signature=bool(s.get("is_signature")), source=s.get("source"))
+            for s in d.get("skills", [])
+        ],
+        evolves_to=list(d.get("evolves_to", [])),
+        evolves_from=list(d.get("evolves_from", [])),
+        conditions=dict(d.get("conditions", {})),
+        first_appearance_title=d.get("first_appearance_title"),
+        first_appearance_date=d.get("first_appearance_date"),
+        first_appearance_medium=d.get("first_appearance_medium"),
+        name_origin=d.get("name_origin"),
+        image_url=d.get("image_url"),
+        image_page=d.get("image_page"),
+        is_official=d.get("is_official"),
+        extra=dict(d.get("extra", {})),
+    )
+
+
+def records_payload_hash(records: list[SourceDigimon]) -> str:
+    """Hash of the *complete* normalized payload (all fields), so any change in
+    a record that affects the canonical result forces a re-merge (T4.2)."""
+    import hashlib
+    import json as _json
+
+    payload = _json.dumps(
+        [source_digimon_to_dict(r) for r in records], sort_keys=True, default=str
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]

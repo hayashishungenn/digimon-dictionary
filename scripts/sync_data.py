@@ -22,8 +22,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json as _json
 import logging
 import os
 import shutil
@@ -62,11 +60,12 @@ ALL_SOURCES = ["dapi", "official", "wikimon", "digimons_net", "digidb"]
 INGEST_ORDER = ["dapi", "digimons_net", "official", "wikimon", "digidb"]
 
 
-def make_fetcher(cache_dir: Path | None = None) -> Fetcher:
+def make_fetcher(cache_dir: Path | None = None, force: bool = False) -> Fetcher:
     return Fetcher(
         rate_per_second=1.0,
         max_concurrency=2,
         cache_dir=cache_dir,
+        force=force,
     )
 
 
@@ -167,19 +166,32 @@ def _clear_http_cache(cache_dir: Path, parent: Path) -> bool:
     return True
 
 
-def _fetch_sources(sources: list[str], fetcher: Fetcher, force: bool,
-                   state: SyncState, loader) -> tuple[dict[str, list], dict[str, Exception]]:
-    """Fetch each requested source. Returns (records_by_source, failures).
+def _records_hash(records: list) -> str:
+    """Full normalized-payload hash (T4.2): any field change forces a re-merge."""
+    from pipeline.core.models import records_payload_hash
 
-    Any exception (including a source that now returns empty after previously
-    yielding data) is a hard failure: the caller must abort without publishing.
+    return records_payload_hash(records)
+
+
+def _fetch_sources(sources: list[str], fetcher: Fetcher, force: bool,
+                   state: SyncState, loader, persist_raw: bool = True,
+                   ) -> tuple[dict[str, list], dict[str, Exception], dict[str, dict]]:
+    """Fetch each requested source.
+
+    Returns ``(records_by_source, failures, source_stats)``. ``source_stats``
+    holds per-source started_at / payload_hash / raw_completeness / parsed /
+    failed so a ``source_sync`` row can be written. Any exception (including a
+    source that now returns empty after previously yielding data) is a hard
+    failure: the caller must abort without publishing.
     """
     records_by_source: dict[str, list] = {}
     failures: dict[str, Exception] = {}
+    source_stats: dict[str, dict] = {}
     for name in INGEST_ORDER:
         if name not in sources:
             continue
         logger.info("=== fetching source: %s ===", name)
+        started = _now()
         try:
             adapter = loader(name)
             records = adapter.fetch(fetcher, force=force)
@@ -190,15 +202,98 @@ def _fetch_sources(sources: list[str], fetcher: Fetcher, force: bool,
                     f"(possible site change / failed pagination)"
                 )
             records_by_source[name] = records
-            logger.info("%s: %d records", name, len(records))
+            if persist_raw:
+                try:
+                    from pipeline.sources.base import save_records
+
+                    save_records(name, records)
+                except OSError as exc:  # raw retention must not kill the sync
+                    logger.warning("could not persist raw records for %s: %s", name, exc)
+            source_stats[name] = {
+                "started_at": started,
+                "payload_hash": _records_hash(records),
+                "raw_completeness": True,
+                "parsed": len(records),
+                "failed": 0,
+            }
+            logger.info("%s: %d records (hash %s)", name, len(records), source_stats[name]["payload_hash"])
         except Exception as exc:  # noqa: BLE001
             failures[name] = exc
+            source_stats[name] = {"started_at": started, "raw_completeness": False,
+                                  "parsed": 0, "failed": 1}
             logger.error("source %s failed: %s", name, exc)
-    return records_by_source, failures
+    return records_by_source, failures, source_stats
+
+
+def _load_from_raw(sources: list[str]) -> tuple[dict[str, list], dict[str, Exception], dict[str, dict]]:
+    """Rebuild candidate input from persisted raw records (offline, T4.6).
+
+    Uses data/raw/<source>/records.json written by a previous real sync, so a
+    candidate can be reproduced without re-visiting the network.
+    """
+    from pipeline.sources.base import load_records
+
+    records_by_source: dict[str, list] = {}
+    failures: dict[str, Exception] = {}
+    source_stats: dict[str, dict] = {}
+    for name in INGEST_ORDER:
+        if name not in sources:
+            continue
+        records = load_records(name)
+        if not records:
+            failures[name] = RuntimeError(f"no persisted raw records for '{name}' (run a real sync first)")
+            source_stats[name] = {"started_at": None, "raw_completeness": False, "parsed": 0, "failed": 1}
+            logger.error("from-raw: no records for %s", name)
+            continue
+        records_by_source[name] = records
+        source_stats[name] = {
+            "started_at": None,
+            "payload_hash": _records_hash(records),
+            "raw_completeness": True,
+            "parsed": len(records),
+            "failed": 0,
+        }
+        logger.info("from-raw: %s -> %d records", name, len(records))
+    return records_by_source, failures, source_stats
+
+
+def _write_source_sync(conn: sqlite3.Connection, run_id: str,
+                       records_by_source: dict[str, list],
+                       source_stats: dict[str, dict],
+                       failures: dict[str, Exception]) -> None:
+    """Record every source's real status for this run in the `source_sync` table."""
+    finished = _now()
+    for name, records in records_by_source.items():
+        st = source_stats.get(name, {})
+        digest = st.get("payload_hash") or _records_hash(records)
+        conn.execute(
+            """INSERT OR REPLACE INTO source_sync
+               (source, run_id, last_seen_at, started_at, finished_at, status,
+                records, parsed_count, failed_count, raw_completeness,
+                content_hash, payload_hash, error_summary)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            [name, run_id, _now(), st.get("started_at"), finished, "ok",
+             len(records), st.get("parsed", len(records)), st.get("failed", 0),
+             1 if st.get("raw_completeness", True) else 0, digest, digest, None],
+        )
+    for name, exc in failures.items():
+        st = source_stats.get(name, {})
+        conn.execute(
+            """INSERT OR REPLACE INTO source_sync
+               (source, run_id, started_at, finished_at, status,
+                records, parsed_count, failed_count, raw_completeness,
+                content_hash, payload_hash, error_summary)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            [name, run_id, st.get("started_at"), finished, "failed",
+             0, st.get("parsed", 0), st.get("failed", 1), 0, None, None, str(exc)],
+        )
+    conn.commit()
 
 
 def _build_db(conn: sqlite3.Connection, records_by_source: dict[str, list],
-              sources: list[str], *, partial: bool) -> None:
+              sources: list[str], *, partial: bool, run_id: str | None = None,
+              source_stats: dict[str, dict] | None = None,
+              failures: dict[str, Exception] | None = None) -> None:
     """MATCH + MERGE + edges + relations + game stats + snapshot on `conn`.
 
     `conn` is a candidate database; every destructive step is safe because the
@@ -297,6 +392,9 @@ def _build_db(conn: sqlite3.Connection, records_by_source: dict[str, list],
     logger.info("snapshot: %s", snap)
     conn.commit()
 
+    # per-source sync status is queryable in the candidate (T4.1)
+    _write_source_sync(conn, run_id or "?", records_by_source, source_stats or {}, failures or {})
+
 
 def _preserve_review_history(db_path: Path, conn: sqlite3.Connection) -> None:
     """Carry resolved/wontfix review items from the live DB into the candidate.
@@ -348,15 +446,15 @@ def _publish(candidate: Path, target: Path) -> None:
 
 def _update_state(state: SyncState, records_by_source: dict[str, list],
                   sources: list[str]) -> None:
-    """Record per-source hashes/counts ONLY after a successful publish."""
+    """Record per-source hashes/counts ONLY after a successful publish.
+
+    The stored hash covers the full normalized payload, so "unchanged" can only
+    mean the source content is genuinely identical (T4.2 / T4.3).
+    """
     for name, records in records_by_source.items():
-        digest = hashlib.sha256(
-            _json.dumps(
-                [[r.source_id, [n.value for n in r.names]] for r in records],
-                default=str, sort_keys=True,
-            ).encode("utf-8")
-        ).hexdigest()[:16]
-        state.set(name, content_hash=digest, last_seen_at=_now(), records=len(records))
+        digest = _records_hash(records)
+        state.set(name, content_hash=digest, payload_hash=digest,
+                  last_seen_at=_now(), records=len(records))
     state.set("sync_data", sources=sources)
 
 
@@ -395,6 +493,8 @@ def run(argv: list[str] | None = None, *, loader=None, reports_dir: Path | None 
                     help="explicitly publish a partial (source-subset) candidate, "
                          "marking the snapshot as partial")
     ap.add_argument("--images", action="store_true", help="also download images after sync")
+    ap.add_argument("--from-raw", action="store_true",
+                    help="rebuild from persisted data/raw/<source>/records.json (offline, no network)")
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -414,17 +514,22 @@ def run(argv: list[str] | None = None, *, loader=None, reports_dir: Path | None 
     if args.force and not _clear_http_cache(cache_dir, db_path.parent):
         return 1
 
+    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + f"-{os.getpid():x}"
+    # only persist raw snapshots for the real loader (tests inject fake adapters)
+    persist_raw = loader is None
     try:
         with sync_lock(db_path.parent / ".sync.lock"):
             return _run_locked(args, sources, db_path, candidate, cache_dir,
-                               state, loader or load_source, reports_dir or REPORTS_DIR)
+                               state, loader or load_source, reports_dir or REPORTS_DIR,
+                               run_id, persist_raw)
     except SyncLockError as exc:
         logger.error("%s", exc)
         return 1
 
 
 def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
-                cache_dir: Path, state: SyncState, loader, reports_dir: Path) -> int:
+                cache_dir: Path, state: SyncState, loader, reports_dir: Path,
+                run_id: str, persist_raw: bool) -> int:
     # --- guard: running a source subset that EXCLUDES a previously-ingested
     # source would wipe that source's derived rows from the published DB.
     existing = _count_existing(db_path)
@@ -447,9 +552,13 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
     try:
         conn = connect(candidate)
         create_schema(conn)
-        fetcher = make_fetcher(cache_dir=cache_dir)
-
-        records_by_source, failures = _fetch_sources(sources, fetcher, args.force, state, loader)
+        if args.from_raw:
+            records_by_source, failures, source_stats = _load_from_raw(sources)
+        else:
+            fetcher = make_fetcher(cache_dir=cache_dir, force=args.force)
+            records_by_source, failures, source_stats = _fetch_sources(
+                sources, fetcher, args.force, state, loader, persist_raw=persist_raw
+            )
 
         if failures:
             # Hard failure: never publish. Build a best-effort inspection
@@ -457,15 +566,34 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
             logger.error("required source(s) failed: %s", ", ".join(failures))
             if records_by_source:
                 try:
-                    _build_db(conn, records_by_source, sources, partial=True)
+                    _build_db(conn, records_by_source, sources, partial=True,
+                              run_id=run_id, source_stats=source_stats, failures=failures)
                     _write_validation_report(candidate, reports_dir, args.skip_validation)
                 except Exception as exc:  # noqa: BLE001
                     logger.error("could not build inspection candidate: %r", exc)
             logger.error("sync FAILED; official database unchanged")
             return 1
 
+        # Incremental no-op (T4.3): when every requested source is unchanged AND
+        # the live DB already has data, there is nothing to rebuild — skip the
+        # expensive merge and leave the DB untouched. Only reported when the
+        # source fetch was complete and the full payload hash matches.
         partial = bool(existing > 0 and dropped)
-        _build_db(conn, records_by_source, sources, partial=partial)
+        if existing > 0 and not partial and not args.force:
+            all_unchanged = True
+            for name, records in records_by_source.items():
+                if state.get(name).get("content_hash") != _records_hash(records):
+                    all_unchanged = False
+                    break
+            if all_unchanged:
+                logger.info(
+                    "all sources unchanged since the last successful sync; "
+                    "incremental no-op (database already current)"
+                )
+                return 0
+
+        _build_db(conn, records_by_source, sources, partial=partial,
+                  run_id=run_id, source_stats=source_stats, failures=failures)
 
         # candidate validation is a publication gate (T1.4 / T2.10)
         report = _write_validation_report(candidate, reports_dir, args.skip_validation)

@@ -22,7 +22,7 @@ from pathlib import Path
 # the DB's `PRAGMA user_version`. Migrations are additive and never drop or
 # destroy data — an old DB is upgraded in place, so existing rows survive.
 # ---------------------------------------------------------------------------
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _migrate_v1(conn: sqlite3.Connection) -> None:
@@ -79,9 +79,33 @@ def _migrate_v2(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v3(conn: sqlite3.Connection) -> None:
+    """v2 -> v3: audit-grade per-source sync tracking.
+
+    Extends `source_sync` with run metadata (run_id, started/finished),
+    completeness (raw_completeness), per-stage counts (parsed/failed), the full
+    normalized payload hash, and an error summary — so a run's true status for
+    every source is queryable (T4).
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(source_sync)")}
+    for col, ddl in (
+        ("run_id", "ALTER TABLE source_sync ADD COLUMN run_id TEXT"),
+        ("started_at", "ALTER TABLE source_sync ADD COLUMN started_at TEXT"),
+        ("finished_at", "ALTER TABLE source_sync ADD COLUMN finished_at TEXT"),
+        ("parsed_count", "ALTER TABLE source_sync ADD COLUMN parsed_count INTEGER"),
+        ("failed_count", "ALTER TABLE source_sync ADD COLUMN failed_count INTEGER"),
+        ("raw_completeness", "ALTER TABLE source_sync ADD COLUMN raw_completeness INTEGER"),
+        ("payload_hash", "ALTER TABLE source_sync ADD COLUMN payload_hash TEXT"),
+        ("error_summary", "ALTER TABLE source_sync ADD COLUMN error_summary TEXT"),
+    ):
+        if col not in cols:
+            conn.execute(ddl)
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_v1,
     2: _migrate_v2,
+    3: _migrate_v3,
 }
 
 
@@ -408,11 +432,19 @@ SCHEMA_DDL: list[str] = [
     );
     CREATE TABLE IF NOT EXISTS source_sync (
         source             TEXT PRIMARY KEY,   -- dapi|wikimon|official|digimons_net|digidb|manual
+        run_id             TEXT,               -- sync run this row belongs to
         source_updated_at  TEXT,
         last_seen_at       TEXT,
-        content_hash       TEXT,
-        records            INTEGER,
-        status             TEXT
+        started_at         TEXT,
+        finished_at        TEXT,
+        status             TEXT,               -- ok|unchanged|failed
+        records            INTEGER,            -- fetched record count
+        parsed_count       INTEGER,
+        failed_count       INTEGER,
+        raw_completeness   INTEGER,            -- 1 when pagination/details fully fetched
+        content_hash       TEXT,               -- legacy incremental marker
+        payload_hash       TEXT,               -- hash of the full normalized payload
+        error_summary      TEXT
     );
     """,
     # ---- FTS5 search index ------------------------------------------------

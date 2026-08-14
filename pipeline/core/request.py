@@ -12,9 +12,9 @@ import logging
 import random
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import httpx
 
@@ -94,10 +94,12 @@ class Fetcher:
         cache_dir: Path | None = None,
         max_concurrency: int = 2,
         headers: dict[str, str] | None = None,
+        force: bool = False,
     ) -> None:
         self._bucket = TokenBucket(rate_per_second)
         self._timeout = timeout
         self._max_retries = max_retries
+        self._force = force
         self._headers = {"User-Agent": user_agent}
         if headers:
             self._headers.update(headers)
@@ -160,7 +162,7 @@ class Fetcher:
         max_retries: int | None = None,
     ) -> FetchResult:
         key = _cache_key(url, params)
-        if use_cache:
+        if use_cache and not self._force:
             cached = self._read_cache(key)
             if cached is not None:
                 return cached
@@ -184,7 +186,7 @@ class Fetcher:
                     content_type=resp.headers.get("content-type"),
                     http_version=getattr(resp, "http_version", None),
                 )
-                if use_cache:
+                if use_cache and not self._force:
                     self._write_cache(key, result)
                 return result
             except httpx.HTTPStatusError as exc:
@@ -214,7 +216,7 @@ class Fetcher:
     def close(self) -> None:
         self._client.close()
 
-    def __enter__(self) -> "Fetcher":
+    def __enter__(self) -> Fetcher:
         return self
 
     def __exit__(self, *exc: Any) -> None:

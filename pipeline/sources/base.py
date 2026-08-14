@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -39,12 +39,50 @@ def save_raw(source: str, name: str, payload: Any, *, meta: dict[str, Any] | Non
         raw_path = directory / f"{name}.raw"
         raw_path.write_bytes(payload if isinstance(payload, bytes) else str(payload).encode("utf-8"))
     meta = meta or {}
-    meta.setdefault("fetch_date", datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    meta.setdefault("fetch_date", datetime.now(UTC).isoformat(timespec="seconds"))
     meta.setdefault("source", source)
     (directory / f"{name}.meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), "utf-8"
     )
     return raw_path
+
+
+def save_records(source: str, records: list[SourceDigimon]) -> Path:
+    """Persist the normalized records under data/raw/<source>/records.json.
+
+    Retains enough content to rebuild a candidate offline (without re-fetching
+    the network) — the full normalized payload, not just id lists (T4.6).
+    """
+    from pipeline.core.models import source_digimon_to_dict
+
+    directory = RAW_SOURCES[source]
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "records.json"
+    path.write_text(
+        json.dumps([source_digimon_to_dict(r) for r in records], ensure_ascii=False, indent=1),
+        "utf-8",
+    )
+    meta_path = directory / "records.meta.json"
+    meta_path.write_text(
+        json.dumps({
+            "source": source,
+            "fetch_date": datetime.now(UTC).isoformat(timespec="seconds"),
+            "count": len(records),
+        }, ensure_ascii=False),
+        "utf-8",
+    )
+    return path
+
+
+def load_records(source: str) -> list[SourceDigimon]:
+    """Load normalized records previously persisted by save_records()."""
+    from pipeline.core.models import source_digimon_from_dict
+
+    path = RAW_SOURCES[source] / "records.json"
+    if not path.exists():
+        return []
+    data = json.loads(path.read_text("utf-8"))
+    return [source_digimon_from_dict(d) for d in data]
 
 
 class SourceAdapter(ABC):
