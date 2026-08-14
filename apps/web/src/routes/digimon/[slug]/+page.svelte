@@ -15,16 +15,24 @@
 
 	let evoDepth = $state(1);
 
+	// Request sequence token: when the route slug changes quickly, only the
+	// newest detail response may win (T6.1 / T6.3).
+	let reqSeq = 0;
+
 	async function load() {
+		const my = ++reqSeq;
 		loading = true;
 		error = null;
 		try {
-			data = await api.detail(slug);
+			const d = await api.detail(slug);
+			if (my !== reqSeq) return; // stale detail — drop it
+			data = d;
 			evoDepth = 1;
 		} catch (e) {
+			if (my !== reqSeq) return;
 			error = e instanceof Error ? e.message : '加载失败';
 		} finally {
-			loading = false;
+			if (my === reqSeq) loading = false;
 		}
 	}
 

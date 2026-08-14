@@ -4,8 +4,8 @@ import { test, expect } from '@playwright/test';
 // entity; detail page shows trilingual names; skills; evolution navigation;
 // combined filtering; favorites survive reload.
 //
-// These tests need the real synced database — run `uv run python scripts/sync_data.py`
-// before executing.
+// Hermetic (T6.7): these run against a deterministic fixture DB built by
+// tests/fixtures/build_e2e_fixture.py — no real sync, no network, no random data.
 
 test.describe.configure({ mode: 'serial' });
 
@@ -103,23 +103,19 @@ test('empty state shows friendly message', async ({ page }) => {
 	await page.goto('/');
 	// a filter with no matches must show the empty-state message, not crash
 	await page.getByRole('tab', { name: '数码蛋' }).click();
-	await page.waitForTimeout(400);
-	const text = await page.locator('.result-count').textContent();
-	if (text && text.includes('0')) {
-		await expect(page.getByText('没有找到匹配的数码兽')).toBeVisible();
-	}
+	await expect(page.locator('.result-count')).toContainText('共 0 只');
+	await expect(page.getByText('没有找到匹配的数码兽')).toBeVisible();
 });
 
 test('official / extended toggle filters the grid', async ({ page }) => {
 	await page.goto('/');
 	await page.waitForSelector('[data-testid="digimon-card"]');
-	await page.waitForTimeout(400);
 	const countAll = await page.locator('.result-count').textContent();
 	await page.getByRole('button', { name: '官方图鉴' }).click();
-	await page.waitForTimeout(500);
+	await expect(page.locator('.result-count')).not.toHaveText(countAll ?? '');
 	const countOfficial = await page.locator('.result-count').textContent();
 	await page.getByRole('button', { name: '扩展图鉴' }).click();
-	await page.waitForTimeout(500);
+	await expect(page.locator('.result-count')).not.toHaveText(countOfficial ?? '');
 	const countExtended = await page.locator('.result-count').textContent();
 	// official-only and extended-only each are subsets of the full set
 	const nAll = parseInt(countAll?.match(/\d+/)?.at(0) ?? '0');
@@ -157,4 +153,22 @@ test('detail page shows representative primary evolution line', async ({ page })
 	await page.getByText('代表进化路线（主线）').waitFor();
 	// the primary chain is a horizontal chain containing the current digimon
 	await expect(page.locator('.evo-chain')).toContainText('Agumon');
+});
+
+test('narrow screen has no horizontal overflow', async ({ page }) => {
+	// 390×844 (iPhone 12-class) — the layout must not overflow horizontally.
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto('/');
+	await page.waitForSelector('[data-testid="digimon-card"]');
+	const homeOverflow = await page.evaluate(
+		() => document.documentElement.scrollWidth > document.documentElement.clientWidth
+	);
+	expect(homeOverflow).toBe(false);
+
+	await page.goto('/digimon/agumon');
+	await expect(page.locator('.detail-h1')).toBeVisible();
+	const detailOverflow = await page.evaluate(
+		() => document.documentElement.scrollWidth > document.documentElement.clientWidth
+	);
+	expect(detailOverflow).toBe(false);
 });

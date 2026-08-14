@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { EvolutionGraph } from '$lib/api/types';
+	import type { EvolutionGraph, EvolutionNode } from '$lib/api/types';
 	import PlaceholderImage from './PlaceholderImage.svelte';
 	import EvolutionSvg from './EvolutionSvg.svelte';
 
@@ -13,7 +13,13 @@
 
 	let view = $state<'simple' | 'graph'>('simple');
 
-	let center = $derived(graph.nodes[String(centerId)]);
+	// A node id referenced by an edge or as the center may not exist in the
+	// response (e.g. a deleted entity) — always guard before rendering (T6.4).
+	function node(id: number): EvolutionNode | undefined {
+		return graph.nodes[String(id)];
+	}
+
+	let center = $derived(node(centerId));
 	let inEdges = $derived(graph.edges.filter((e) => e.to === centerId && e.from !== centerId));
 	let outEdges = $derived(graph.edges.filter((e) => e.from === centerId && e.to !== centerId));
 	let primaryIn = $derived(graph.edges.filter((e) => e.to === centerId && e.is_primary_line && e.from !== centerId));
@@ -42,29 +48,31 @@
 </script>
 
 <div class="evo">
-	<div class="evo-tabs">
-		<button class="btn {view === 'simple' ? 'active' : ''}" onclick={() => (view = 'simple')}>简单模式</button>
-		<button class="btn {view === 'graph' ? 'active' : ''}" onclick={() => (view = 'graph')}>图谱模式</button>
+	<div class="evo-tabs" role="group" aria-label="进化图模式">
+		<button class="btn {view === 'simple' ? 'active' : ''}" aria-pressed={view === 'simple'} onclick={() => (view = 'simple')}>简单模式</button>
+		<button class="btn {view === 'graph' ? 'active' : ''}" aria-pressed={view === 'graph'} onclick={() => (view = 'graph')}>图谱模式</button>
 		{#if view === 'graph' && canExpand}
-			<button class="btn" onclick={onExpand}>展开更深一层</button>
+			<button class="btn" onclick={onExpand} aria-label="展开更深一层进化">展开更深一层</button>
 		{/if}
 	</div>
 
 	{#if view === 'simple'}
 		<div class="evo-simple">
-			{#if hasPrimary}
+			{#if hasPrimary && center}
 				<div>
 					<span class="section-title small">代表进化路线（主线）</span>
 					<div class="evo-chain">
 						{#each primaryIn as e}
-							<a class="evo-node" href={`/digimon/${graph.nodes[String(e.from)].canonical_slug}`}>
-								<PlaceholderImage src={graph.nodes[String(e.from)].main_image} alt={graph.nodes[String(e.from)].name_en ?? ''} label="?" />
-								<span class="n-block">
-									<span class="n-zh">{graph.nodes[String(e.from)].name_zh_cn ?? '—'}</span>
-									<span class="n-en">{graph.nodes[String(e.from)].name_en}</span>
-								</span>
-							</a>
-							<span class="evo-arrow">→</span>
+							{#if node(e.from)}
+								<a class="evo-node" href={`/digimon/${node(e.from)!.canonical_slug}`}>
+									<PlaceholderImage src={node(e.from)!.main_image} alt={node(e.from)!.name_en ?? ''} label="?" />
+									<span class="n-block">
+										<span class="n-zh">{node(e.from)!.name_zh_cn ?? '—'}</span>
+										<span class="n-en">{node(e.from)!.name_en}</span>
+									</span>
+								</a>
+								<span class="evo-arrow">→</span>
+							{/if}
 						{/each}
 						<a class="evo-node center" href={`/digimon/${center.canonical_slug}`}>
 							<PlaceholderImage src={center?.main_image} alt={center?.name_en ?? ''} label="?" />
@@ -74,14 +82,16 @@
 							</span>
 						</a>
 						{#each primaryOut as e}
-							<span class="evo-arrow">→</span>
-							<a class="evo-node" href={`/digimon/${graph.nodes[String(e.to)].canonical_slug}`}>
-								<PlaceholderImage src={graph.nodes[String(e.to)].main_image} alt={graph.nodes[String(e.to)].name_en ?? ''} label="?" />
-								<span class="n-block">
-									<span class="n-zh">{graph.nodes[String(e.to)].name_zh_cn ?? '—'}</span>
-									<span class="n-en">{graph.nodes[String(e.to)].name_en}</span>
-								</span>
-							</a>
+							{#if node(e.to)}
+								<span class="evo-arrow">→</span>
+								<a class="evo-node" href={`/digimon/${node(e.to)!.canonical_slug}`}>
+									<PlaceholderImage src={node(e.to)!.main_image} alt={node(e.to)!.name_en ?? ''} label="?" />
+									<span class="n-block">
+										<span class="n-zh">{node(e.to)!.name_zh_cn ?? '—'}</span>
+										<span class="n-en">{node(e.to)!.name_en}</span>
+									</span>
+								</a>
+							{/if}
 						{/each}
 					</div>
 				</div>
@@ -91,16 +101,18 @@
 				{#if inEdges.length > 0}
 					<div class="evo-row-wrap">
 						{#each inEdges as e}
-							<a class="evo-node" href={`/digimon/${graph.nodes[String(e.from)].canonical_slug}`}>
-								<PlaceholderImage src={graph.nodes[String(e.from)].main_image} alt={graph.nodes[String(e.from)].name_en ?? ''} label="?" />
-								<span class="n-block">
-									<span class="n-zh">{graph.nodes[String(e.from)].name_zh_cn ?? '—'}</span>
-									<span class="n-en">{graph.nodes[String(e.from)].name_en}</span>
-									{#if e.condition || e.evolution_type !== 'normal'}
-										<span class="n-cond">{typeLabel(e.evolution_type)}{e.condition ? ` · ${e.condition}` : ''}</span>
-									{/if}
-								</span>
-							</a>
+							{#if node(e.from)}
+								<a class="evo-node" href={`/digimon/${node(e.from)!.canonical_slug}`}>
+									<PlaceholderImage src={node(e.from)!.main_image} alt={node(e.from)!.name_en ?? ''} label="?" />
+									<span class="n-block">
+										<span class="n-zh">{node(e.from)!.name_zh_cn ?? '—'}</span>
+										<span class="n-en">{node(e.from)!.name_en}</span>
+										{#if e.condition || e.evolution_type !== 'normal'}
+											<span class="n-cond">{typeLabel(e.evolution_type)}{e.condition ? ` · ${e.condition}` : ''}</span>
+										{/if}
+									</span>
+								</a>
+							{/if}
 						{/each}
 					</div>
 				{:else}
@@ -108,31 +120,35 @@
 				{/if}
 			</div>
 
-			<div class="evo-center">
-				<span class="evo-node center">
-					<PlaceholderImage src={center?.main_image} alt={center?.name_en ?? ''} label="?" />
-					<span class="n-block">
-						<span class="n-zh">{center?.name_zh_cn ?? '—'}</span>
-						<span class="n-en">{center?.name_en}</span>
+			{#if center}
+				<div class="evo-center">
+					<span class="evo-node center">
+						<PlaceholderImage src={center?.main_image} alt={center?.name_en ?? ''} label="?" />
+						<span class="n-block">
+							<span class="n-zh">{center?.name_zh_cn ?? '—'}</span>
+							<span class="n-en">{center?.name_en}</span>
+						</span>
 					</span>
-				</span>
-			</div>
+				</div>
+			{/if}
 
 			<div>
 				<span class="section-title small">全部可能后续</span>
 				{#if outEdges.length > 0}
 					<div class="evo-row-wrap">
 						{#each outEdges as e}
-							<a class="evo-node" href={`/digimon/${graph.nodes[String(e.to)].canonical_slug}`}>
-								<PlaceholderImage src={graph.nodes[String(e.to)].main_image} alt={graph.nodes[String(e.to)].name_en ?? ''} label="?" />
-								<span class="n-block">
-									<span class="n-zh">{graph.nodes[String(e.to)].name_zh_cn ?? '—'}</span>
-									<span class="n-en">{graph.nodes[String(e.to)].name_en}</span>
-									{#if e.condition || e.evolution_type !== 'normal'}
-										<span class="n-cond">{typeLabel(e.evolution_type)}{e.condition ? ` · ${e.condition}` : ''}</span>
-									{/if}
-								</span>
-							</a>
+							{#if node(e.to)}
+								<a class="evo-node" href={`/digimon/${node(e.to)!.canonical_slug}`}>
+									<PlaceholderImage src={node(e.to)!.main_image} alt={node(e.to)!.name_en ?? ''} label="?" />
+									<span class="n-block">
+										<span class="n-zh">{node(e.to)!.name_zh_cn ?? '—'}</span>
+										<span class="n-en">{node(e.to)!.name_en}</span>
+										{#if e.condition || e.evolution_type !== 'normal'}
+											<span class="n-cond">{typeLabel(e.evolution_type)}{e.condition ? ` · ${e.condition}` : ''}</span>
+										{/if}
+									</span>
+								</a>
+							{/if}
 						{/each}
 					</div>
 				{:else}

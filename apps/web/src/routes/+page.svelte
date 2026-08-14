@@ -22,6 +22,10 @@
 	let offset = $state(0);
 	const PAGE = 60;
 
+	// A request sequence token: only the newest request may update state, so a
+	// slow stale response can never overwrite a newer search/list result (T6.1).
+	let reqSeq = 0;
+
 	const LEVEL_TABS: Array<{ value: string | null; label: string }> = [
 		{ value: null, label: '全部' },
 		{ value: 'digi_egg', label: '数码蛋' },
@@ -36,6 +40,7 @@
 	];
 
 	async function load() {
+		const my = ++reqSeq;
 		loading = true;
 		error = null;
 		try {
@@ -51,18 +56,21 @@
 				limit: PAGE,
 				offset
 			} satisfies ListFilters);
+			if (my !== reqSeq) return; // stale response — drop it
 			items = res.items;
 			total = res.total;
 		} catch (e) {
+			if (my !== reqSeq) return;
 			error = e instanceof Error ? e.message : '加载失败';
 		} finally {
-			loading = false;
+			if (my === reqSeq) loading = false;
 		}
 	}
 
 	// search mode: switch to search results
 	let searchMode = $state(false);
 	const doSearch = debounce(async (term: string) => {
+		const my = ++reqSeq;
 		if (!term.trim()) {
 			searchMode = false;
 			load();
@@ -70,14 +78,17 @@
 		}
 		searchMode = true;
 		loading = true;
+		error = null;
 		try {
 			const res = await api.search(term, 60);
+			if (my !== reqSeq) return; // stale search — drop it
 			items = res.items;
 			total = res.count;
 		} catch (e) {
+			if (my !== reqSeq) return;
 			error = e instanceof Error ? e.message : '搜索失败';
 		} finally {
-			loading = false;
+			if (my === reqSeq) loading = false;
 		}
 	}, 250);
 
