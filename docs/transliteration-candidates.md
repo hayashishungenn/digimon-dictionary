@@ -1,0 +1,236 @@
+# 中文名音译候选（自动生成 · 未验证）
+
+> 这些数码兽无可靠中文来源，以下为按规格 §8『最后手段』机械音译的候选名，
+> **全部标记 unverified（未验证），不可当作官方/社区定名**。
+
+- [Bun](bun) ブン → **布恩**
+- [Death Airdramon](death-airdramon) デスエアドラモン → **德斯埃阿多拉莫恩**
+- [Death Devimon](death-devimon) デスデビモン → **德斯德比莫恩**
+- [Death Metal Greymon](death-metal-greymon) デスメタルグレイモン → **德斯梅塔鲁古雷伊莫恩**
+- [Death Tyranomon](death-tyranomon) デスティラノモン → **德斯铁伊拉诺莫恩**
+- [Ohakadamon](ohakadamon) おはかだモン → **おはかだ莫恩**
+- [Fujitsumon](fujitsumon) フジツモン → **夫吉茨莫恩**
+- [Whamon Perfect](whamon-perfect) ホエーモン完全体 → **霍埃莫恩完全体**
+- [Blikmon](blikmon) ブリキモン → **布利基莫恩**
+- [Chibi Kiwimon](chibi-kiwimon) チビキウイモン → **奇比基乌伊莫恩**
+- [Etemon Chaos](etemon-chaos) エテモンカオス → **埃铁莫恩卡奥斯**
+- [Chaos Greymon](chaos-greymon) カオスグレイモン → **卡奥斯古雷伊莫恩**
+- [Chaos Lord](chaos-lord) カオスロード → **卡奥斯罗多**
+- [Chaos Piemon](chaos-piemon) カオスピエモン → **卡奥斯皮埃莫恩**
+- [Chaos Seadramon](chaos-seadramon) カオスシードラモン → **卡奥斯西多拉莫恩**
+- [Master V-dramon](master-v-dramon) マスターブイドラモン → **玛斯塔布伊多拉莫恩**
+- [Technodramon](technodramon) テクノドラモン → **铁库诺多拉莫恩**
+- [Generamon](generamon) ジェネラモン → **吉埃内拉莫恩**
+- [Holy Digitamamon](holy-digitamamon) ホーリーデジタマモン → **霍利德吉塔玛莫恩**
+- [Amon](amon) アモン → **阿莫恩**
+- [Umon](umon) ウモン → **乌莫恩**
+- [Jiko Tyumon](jiko-tyumon) ジコチュウモン → **吉科奇尤乌莫恩**
+- [Būmon](b-mon) ブーモン → **布莫恩**
+- [Cardmon C1](cardmon-c1) カードモンC1 → **卡多莫恩C1**
+- [Cardmon C2](cardmon-c2) カードモンC2 → **卡多莫恩C2**
+- [Cardmon R1](cardmon-r1) カードモンR1 → **卡多莫恩R1**
+- [Cardmon R2](cardmon-r2) カードモンR2 → **卡多莫恩R2**
+- [Cardmon S1](cardmon-s1) カードモンS1 → **卡多莫恩S1**
+- [Cardmon S2](cardmon-s2) カードモンS2 → **卡多莫恩S2**
+- [Cardmon U1](cardmon-u1) カードモンU1 → **卡多莫恩U1**
+- [Cardmon U2](cardmon-u2) カードモンU2 → **卡多莫恩U2**
+- [Lykamon](lykamon) リュカモン → **利尤卡莫恩**
+- [Navimon](navimon) ナビモーン → **纳比莫恩**
+- [Panimon](panimon) パニモン → **帕尼莫恩**
+- [Trailmon Angler](trailmon-angler) トレイルモン アングラー → **托雷伊鲁莫恩 阿恩古拉**
+- [Trailmon Ball](trailmon-ball) トレイルモン ボール → **托雷伊鲁莫恩 博鲁**
+- [Trailmon Buffalo](trailmon-buffalo) トレイルモン バッファロー → **托雷伊鲁莫恩 巴夫阿罗**
+- [Trailmon Franken](trailmon-franken) トレイルモン フランケン → **托雷伊鲁莫恩 夫拉恩凯恩**
+- [Trailmon Kettle](trailmon-kettle) トレイルモン ケトル → **托雷伊鲁莫恩 凯托鲁**
+- [Trailmon Mole](trailmon-mole) トレイルモン モール → **托雷伊鲁莫恩 莫鲁**
+- [Trailmon Raccoon Dog](trailmon-raccoon-dog) トレイルモン ラクーンドッグ → **托雷伊鲁莫恩 拉库恩多古**
+- [Trailmon of Darkness](trailmon-of-darkness) 闇のトレイルモン → **闇の托雷伊鲁莫恩**
+- [Regulumon](regulumon) レグルモン → **雷古鲁莫恩**
+- [Hermmon](hermmon) ヘルムモン → **赫鲁姆莫恩**
+- [King Hangyomon](king-hangyomon) キングハンギョモン → **基恩古哈恩吉约莫恩**
+- [Black Guilmon](black-guilmon) ブラックギルモン → **布拉库吉鲁莫恩**
+- [Kohagurumon](kohagurumon) コハグルモン → **科哈古鲁莫恩**
+- [Guidemon](guidemon) ガイドモン → **加伊多莫恩**
+- [Agumon (Black) (2006 Anime Version)](agumon-black-2006) アグモン（黒）（２００６アニメ版） → **阿古莫恩（黒）（２００６阿尼梅版）**
+- [Battle Armament Trailmon](battle-armament-trailmon) 戦闘武装トレイルモン → **戦闘武装托雷伊鲁莫恩**
+- [Bio Coatlmon](bio-coatlmon) バイオクアトルモン → **巴伊奥库阿托鲁莫恩**
+- [Bio Darkdramon](bio-darkdramon) バイオダークドラモン → **巴伊奥达库多拉莫恩**
+- [Bio Lotusmon](bio-lotusmon) バイオロトスモン → **巴伊奥罗托斯莫恩**
+- [Bio Spinomon](bio-spinomon) バイオスピノモン → **巴伊奥斯皮诺莫恩**
+- [Bio Stegomon](bio-stegomon) バイオステゴモン → **巴伊奥斯铁戈莫恩**
+- [Bio Thunderbirmon](bio-thunderbirmon) バイオサンダーバーモン → **巴伊奥萨恩达巴莫恩**
+- [Dot Agumon](dot-agumon) ドットアグモン → **多托阿古莫恩**
+- [Dot Falcomon](dot-falcomon) ドットファルコモン → **多托夫阿鲁科莫恩**
+- [Trailmon Battle Form](trailmon-battle-form) トレイルモン戦闘形態 → **托雷伊鲁莫恩戦闘形態**
+- [Trailmon C-89](trailmon-c-89) トレイルモン C-89型 → **托雷伊鲁莫恩 C-89型**
+- [Santa Agumon](santa-agumon) サンタアグモン → **萨恩塔阿古莫恩**
+- [Agumon(Burst Mode)](agumon-burst-mode) アグモン：バーストモード → **阿古莫恩：巴斯托莫多**
+- [Cannonbeemon (Aircraft Carrier)](cannonbeemon-aircraft-carrier) キャノンビーモン（空母型） → **基亚诺恩比莫恩（空母型）**
+- [Chaos Dukemon Core](chaos-dukemon-core) カオスデュークモン コア → **卡奥斯德尤库莫恩 科阿**
+- [Dot Kamemon](dot-kamemon) ドットカメモン → **多托卡梅莫恩**
+- [Dot Kudamon](dot-kudamon) ドットクダモン → **多托库达莫恩**
+- [Dot Lalamon](dot-lalamon) ドットララモン → **多托拉拉莫恩**
+- [Dot Mirage Gaogamon](dot-mirage-gaogamon) ドットミラージュガオガモン → **多托米拉吉尤加奥加莫恩**
+- [Dot Shine Greymon](dot-shine-greymon) ドットシャイングレイモン → **多托西亚伊恩古雷伊莫恩**
+- [Ofanimon Core](ofanimon-core) オファニモン コア → **奥夫阿尼莫恩 科阿**
+- [Ballistamon MC](ballistamon-mc) バリスタモンＭＣ → **巴利斯塔莫恩ＭＣ**
+- [Ballistamon SR](ballistamon-sr) バリスタモンＳＲ → **巴利斯塔莫恩ＳＲ**
+- [Batterimon](batterimon) バッテリモン → **巴铁利莫恩**
+- [Chibick Sword](chibick-sword) チビックソード → **奇比库索多**
+- [Mach Leomon](mach-leomon) マッハレオモン → **玛哈雷奥莫恩**
+- [Mad Leomon (Final Mode)](mad-leomon-final-mode) マッドレオモン（ファイナルモード） → **玛多雷奥莫恩（夫阿伊纳鲁莫多）**
+- [Mad Leomon (Orochi Mode)](mad-leomon-orochi-mode) マッドレオモン（オロチモード） → **玛多雷奥莫恩（奥罗奇莫多）**
+- [Mega Dark Knightmon](mega-dark-knightmon) メガダークナイトモン → **梅加达库纳伊托莫恩**
+- [Mega Gran Kuwagamon](mega-gran-kuwagamon) メガグランクワガーモン → **梅加古拉恩库瓦加莫恩**
+- [Mush-Upped Mach Leomon](mush-upped-mach-leomon) マッシュアップド マッハレオモン → **玛西尤阿普多 玛哈雷奥莫恩**
+- [Ochi Musyamon](ochi-musyamon) オチムシャモン → **奥奇姆西亚莫恩**
+- [Skull Knightmon(Naginata Mode)](skull-knightmon-naginata-mode) スカルナイトモン：ナギナタモード → **斯卡鲁纳伊托莫恩：纳吉纳塔莫多**
+- [Star Axe](star-axe) スターアックス → **斯塔阿库斯**
+- [Super Dark Knightmon](super-dark-knightmon) スーパーダークナイトモン → **斯帕达库纳伊托莫恩**
+- [Pickmons Slingshot](pickmons-slingshot) ピックモンズパチンコ → **皮库莫恩兹帕奇恩科**
+- [Rare Star Sword](rare-star-sword) レアスターソード → **雷阿斯塔索多**
+- [Reverse Weddinmon](reverse-weddinmon) リバース・ウェディンモン → **利巴斯・乌埃德伊恩莫恩**
+- [Sakuteki Monitamon](sakuteki-monitamon) サクテキモニタモン → **萨库铁基莫尼塔莫恩**
+- [Scud Missimon](scud-missimon) スカッドミサイモン → **斯卡多米萨伊莫恩**
+- [Shoutmon (Blue)](shoutmon-blue) シャウトモン（青） → **西亚乌托莫恩（青）**
+- [Shoutmon SH](shoutmon-sh) シャウトモンＳＨ → **西亚乌托莫恩ＳＨ**
+- [Shoutmon X2 Plus M](shoutmon-x2-plus-m) シャウトモンＸ２プラスＭ → **西亚乌托莫恩Ｘ２普拉斯Ｍ**
+- [Skull Knightmon(Arrow Mode)](skull-knightmon-arrow-mode) スカルナイトモン：アローモード → **斯卡鲁纳伊托莫恩：阿罗莫多**
+- [Gattai Ancient Volcamon](gattai-ancient-volcamon) 合体エンシェントボルケーモン → **合体埃恩西埃恩托博鲁凯莫恩**
+- [Gigantic Numemon](gigantic-numemon) 巨大ヌメモン → **巨大努梅莫恩**
+- [Greymon (Ash)](greymon-ash) グレイモン（灰） → **古雷伊莫恩（灰）**
+- [Hi Mugendramon](hi-mugendramon) ハイムゲンドラモン → **哈伊姆盖恩多拉莫恩**
+- [Hustle Nanimon](hustle-nanimon) ハッスルナニモン → **哈斯鲁纳尼莫恩**
+- [Ice Devimon Enhancement Absorbent](ice-devimon-enhancement-absorbent) アイスデビモン 強化吸収体 → **阿伊斯德比莫恩 強化吸収体**
+- [Ice Devimon Daipenmon Enhancement Absorbent](ice-devimon-daipenmon-enhancement-absorbent) アイスデビモン ダイペンモン 強化吸収体 → **阿伊斯德比莫恩 达伊佩恩莫恩 強化吸収体**
+- [Apollomon Darkness Mode](apollomon-darkness-mode) アポロモンダークネスモード → **阿波罗莫恩达库内斯莫多**
+- [Balli Bastemon](balli-bastemon) バリバステモン → **巴利巴斯铁莫恩**
+- [Bishop Chessmon (Black)](bishop-chessmon-black) ビショップチェスモン黒 → **比西约普奇埃斯莫恩黒**
+- [Black Shoutmon X7](black-shoutmon-x7) ブラックシャウトモンＸ７ → **布拉库西亚乌托莫恩Ｘ７**
+- [Dark Volumon](dark-volumon) ダークボリューモン → **达库博利尤莫恩**
+- [Deadly Tuwarmon](deadly-tuwarmon) デッドリーツワーモン → **德多利茨瓦莫恩**
+- [Deadly Tuwarmon Hell Mode](deadly-tuwarmon-hell-mode) デッドリーツワーモン ヘルモード → **德多利茨瓦莫恩 赫鲁莫多**
+- [Deckerdramon Float Mode](deckerdramon-float-mode) デッカードラモン フロートモード → **德卡多拉莫恩 夫罗托莫多**
+- [Dorbickmon Darkness Mode (Dragon Army)](dorbickmon-darkness-mode-dragon-army) ドルビックモンダークネスモード → **多鲁比库莫恩达库内斯莫多**
+- [Dorbickmon Darkness Mode (Flare Lizamon)](dorbickmon-darkness-mode-flare-lizamon) ドルビックモンダークネスモード + フレアリザモン → **多鲁比库莫恩达库内斯莫多 + 夫雷阿利扎莫恩**
+- [G-Cutemon](g-cutemon) Ｇキュートモン → **Ｇ基尤托莫恩**
+- [Majuu Lilithmon](majuu-lilithmon) 魔獣リリスモン → **魔獣利利斯莫恩**
+- [Mega Black Shoutmon X7](mega-black-shoutmon-x7) メガブラックシャウトモンＸ７ → **梅加布拉库西亚乌托莫恩Ｘ７**
+- [Mega Decker Greymon](mega-decker-greymon) メガデッカーグレイモン → **梅加德卡古雷伊莫恩**
+- [Mega Muso Knightmon](mega-muso-knightmon) メガムソーナイトモン → **梅加姆索纳伊托莫恩**
+- [Mervamon Wide Hi-Vision Sword](mervamon-wide-hi-vision-sword) メルヴァモン ワイドハイビジョンソード → **梅鲁武阿莫恩 瓦伊多哈伊比吉约恩索多**
+- [Neo Vamdemon Darkness Mode (Vampire Army)](neo-vamdemon-darkness-mode-vampire-army) ネオヴァンデモン＋デビモン＋レディーデビモン → **内奥武阿恩德莫恩＋德比莫恩＋雷德伊德比莫恩**
+- [Neo Vamdemon Darkness Mode (Metal Greymon)](neo-vamdemon-darkness-mode-metal-greymon) ネオヴァンデモンダークネスモード → **内奥武阿恩德莫恩达库内斯莫多**
+- [Splashmon Darkness Mode](splashmon-darkness-mode) スプラッシュモンダークネスモード → **斯普拉西尤莫恩达库内斯莫多**
+- [White Lopmon](white-lopmon) 白いロップモン → **白い罗普莫恩**
+- [Xros Up Gumdramon (Kotemon)](xros-up-gumdramon-kotemon) クロスアップ ガムドラモン → **库罗斯阿普 加姆多拉莫恩**
+- [Xros Up Omega Shoutmon (Dorulumon)](xros-up-omega-shoutmon-dorulumon) クロスアップ オメガシャウトモン → **库罗斯阿普 奥梅加西亚乌托莫恩**
+- [Xros Up Opossummon (Candmon)](xros-up-opossummon-candmon) クロスアップ オポッサモン → **库罗斯阿普 奥波萨莫恩**
+- [Pawn Gaossmon](pawn-gaossmon) ポーンガオスモン → **波恩加奥斯莫恩**
+- [Pawn Shoutmon](pawn-shoutmon) ポーンシャウトモン → **波恩西亚乌托莫恩**
+- [Rampage Greymon](rampage-greymon) ランページグレイモン → **拉恩佩吉古雷伊莫恩**
+- [Sethmon Wild Mode](sethmon-wild-mode) セトモンワイルドモード → **塞托莫恩瓦伊鲁多莫多**
+- [Shademon (Nene Ver.)](shademon-nene-ver) シェイドモン（ネネＶｅｒ.） → **西埃伊多莫恩（内内Ｖｅｒ.）**
+- [ShouCutemon](shoucutemon) シャウキュートモン → **西亚乌基尤托莫恩**
+- [Shoutmon X6](shoutmon-x6) シャウトモンＸ6 → **西亚乌托莫恩Ｘ6**
+- [Gattai Lilithmon](gattai-lilithmon) 合体リリスモン → **合体利利斯莫恩**
+- [Giga Breakdramon](giga-breakdramon) ギガブレイクドラモン → **吉加布雷伊库多拉莫恩**
+- [Giga Waru Monzaemon](giga-waru-monzaemon) ギガワルもんざえモン → **吉加瓦鲁もんざえ莫恩**
+- [Golem Jiji Kamemon](golem-jiji-kamemon) ゴーレムジジカメモン → **戈雷姆吉吉卡梅莫恩**
+- [Grademon (Vice)](grademon-vice) グレイドモン（悪） → **古雷伊多莫恩（悪）**
+- [Grandis Kuwagamon Honey Mode](grandis-kuwagamon-honey-mode) グランディスクワガーモン ハニーモード → **古拉恩德伊斯库瓦加莫恩 哈尼莫多**
+- [Gravimon Darkness Mode](gravimon-darkness-mode) グラビモンダークネスモード → **古拉比莫恩达库内斯莫多**
+- [Hubmon](hubmon) ハブモン → **哈布莫恩**
+- [Jiji Shoutmon](jiji-shoutmon) ジジシャウトモン → **吉吉西亚乌托莫恩**
+- [Knightmon Wise Sword Mode](knightmon-wise-sword-mode) ナイトモンワイズソードモード → **纳伊托莫恩瓦伊兹索多莫多**
+- [Xros Up Arresterdramon (Astamon)](xros-up-arresterdramon-astamon) クロスアップ アレスタードラモン → **库罗斯阿普 阿雷斯塔多拉莫恩**
+- [Xros Up Astamon (Cerberumon)](xros-up-astamon-cerberumon) クロスアップ アスタモン → **库罗斯阿普 阿斯塔莫恩**
+- [Xros Up Ballistamon (Revolmon)](xros-up-ballistamon-revolmon) クロスアップ バリスタモン → **库罗斯阿普 巴利斯塔莫恩**
+- [Xros Up Dorulumon (Pawn Chessmon (White))](xros-up-dorulumon-pawn-chessmon-white) クロスアップ ドルルモン → **库罗斯阿普 多鲁鲁莫恩**
+- [Xros Up Shoutmon (Chibi Kamemon)](xros-up-shoutmon-chibi-kamemon) クロスアップ シャウトモン → **库罗斯阿普 西亚乌托莫恩**
+- [Xros Up Submarimon (Plesiomon)](xros-up-submarimon-plesiomon) クロスアップ サブマリモン → **库罗斯阿普 萨布玛利莫恩**
+- [Xros Up Tuwarmon (Superstarmon)](xros-up-tuwarmon-superstarmon) クロスアップ ツワーモン → **库罗斯阿普 茨瓦莫恩**
+- [Woodwoodymon](woodwoodymon) ウッドウッディモン → **乌多乌德伊莫恩**
+- [Venom Vamdemon Undead](venom-vamdemon-undead) ヴェノムヴァンデモンアンデッド → **武埃诺姆武阿恩德莫恩阿恩德多**
+- [Copymon](copymon) コピモン → **科皮莫恩**
+- [Omedamon](omedamon) オメダモン → **奥梅达莫恩**
+- [Voltobautamon (Fusion)](voltobautamon-fusion) ボルトバウタモン (融合体) → **博鲁托巴乌塔莫恩 (融合体)**
+- [Plutomon (Fusion)](plutomon-fusion) プルートモン (融合体) → **普鲁托莫恩 (融合体)**
+- [Ambromon](ambromon) アンブロモン → **阿恩布罗莫恩**
+- [Atratusmon](atratusmon) アトラタスモン → **阿托拉塔斯莫恩**
+- [Beelzebumon + Revolmon](beelzebumon-revolmon-1) ベルゼブモン＋リボルモン → **贝鲁泽布莫恩＋利博鲁莫恩**
+- [Beelzebumon + Starmons](beelzebumon-starmons-1) ベルゼブモン＋スターモンズ → **贝鲁泽布莫恩＋斯塔莫恩兹**
+- [Berserk Titamon](berserk-titamon) 暴走タイタモン → **暴走塔伊塔莫恩**
+- [Beso Bombmon](beso-bombmon) ベソボムモン → **贝索博姆莫恩**
+- [Black War Greymon: "G" Erosion Mode](black-war-greymon-g-erosion-mode) ブラックウォーグレイモン: “G”侵食モード → **布拉库乌奥古雷伊莫恩: “G”侵食莫多**
+- [Cheer Galmon](cheer-galmon) チアガールモン → **奇阿加鲁莫恩**
+- [Chokimon](chokimon) チョキモン → **奇约基莫恩**
+- [Corvumon](corvumon) コルバモン → **科鲁巴莫恩**
+- [Danmon](danmon) ダンモン → **达恩莫恩**
+- [Dorulumon + Starmons](dorulumon-starmons-1) ドルルモン＋スターモンズ → **多鲁鲁莫恩＋斯塔莫恩兹**
+- [Earthdramon](earthdramon) アースドラモン → **阿斯多拉莫恩**
+- [Fuukashita Medal](fuukashita-medal) フウカシタメダル → **夫乌卡西塔梅达鲁**
+- [Gaagamon](gaagamon) ガーガモン → **加加莫恩**
+- [Gaiamon](gaiamon) ガイアモン → **加伊阿莫恩**
+- [Garuru Metal](garuru-metal) ガルルメタル → **加鲁鲁梅塔鲁**
+- [Grey Wars](grey-wars) グレイウォーズ → **古雷伊乌奥兹**
+- [Greymon: "G" Erosion Mode](greymon-g-erosion-mode) グレイモン：“G”侵食モード → **古雷伊莫恩：“G”侵食莫多**
+- [Greymon (Orange)](greymon-orange) グレイモン（橙） → **古雷伊莫恩（橙）**
+- [Guumon](guumon) グーモン → **古莫恩**
+- [Huntermon](huntermon) ハンターモン → **哈恩塔莫恩**
+- [Kaminarimon](kaminarimon) カミナリモン → **卡米纳利莫恩**
+- [Kita Kitsunemon](kita-kitsunemon) キタキツネモン → **基塔基茨内莫恩**
+- [Kyukanchoumon](kyukanchoumon) キュウカンチョウモン → **基尤乌卡恩奇约乌莫恩**
+- [Laeus Greymon](laeus-greymon) レウスグレイモン → **雷乌斯古雷伊莫恩**
+- [Mail Birdramon + Golemon](mail-birdramon-golemon-1) メイルバードラモン＋ゴーレモン → **梅伊鲁巴多拉莫恩＋戈雷莫恩**
+- [Mecha Rogue 04 (Evolved Form)](mecha-rogue-04-evolved-form) メカローグ04 → **梅卡罗古04**
+- [Medal](medal) メダル → **梅达鲁**
+- [Mega Darkness Bagramon](mega-darkness-bagramon-1) メガダークネスバグラモン → **梅加达库内斯巴古拉莫恩**
+- [Metabee](metabee) メタビー → **梅塔比**
+- [Metal Garurumon: "G" Erosion Mode](metal-garurumon-g-erosion-mode) メタルガルルモン：“G”侵食モード → **梅塔鲁加鲁鲁莫恩：“G”侵食莫多**
+- [Metal Garurumon (Red)](metal-garurumon-red) メタルガルルモン (赤) → **梅塔鲁加鲁鲁莫恩 (赤)**
+- [Metal Greymon: "G" Erosion Mode](metal-greymon-g-erosion-mode) メタルグレイモン：“G”侵食モード → **梅塔鲁古雷伊莫恩：“G”侵食莫多**
+- [Metal Greymon (Virus): "G" Erosion Mode](metal-greymon-virus-g-erosion-mode) メタルグレイモン（ウィルス種）：“G”侵食モード → **梅塔鲁古雷伊莫恩（乌伊鲁斯種）：“G”侵食莫多**
+- [Mirror Ballmon](mirror-ballmon) ミラーボールモン → **米拉博鲁莫恩**
+- [Miyuki (Kenzoku)](miyuki-kenzoku) ミユキ → **米尤基**
+- [Mugendramon: MFS-3 Mode](mugendramon-mfs-3-mode) ムゲンドラモン：3式〈改〉モード → **姆盖恩多拉莫恩：3式〈改〉莫多**
+- [Neo Crimson](neo-crimson) ネオクリムゾン → **内奥库利姆佐恩**
+- [Okunimon](okunimon) オクニモン → **奥库尼莫恩**
+- [Omega Knight](omega-knight) オメガナイツ → **奥梅加纳伊茨**
+- [Omegamon: "G" Fusion Mode](omegamon-g-fusion-mode) オメガモン：“G”融合モード → **奥梅加莫恩：“G”融合莫多**
+- [Overlord GAIA](overlord-gaia) オーバーロードＧＡＩＡ → **奥巴罗多ＧＡＩＡ**
+- [Paamon](paamon) パーモン → **帕莫恩**
+- [Panoptemon](panoptemon) パノプテモン → **帕诺普铁莫恩**
+- [Plutodumon](plutodumon) プルトダモン → **普鲁托达莫恩**
+- [Punch Narabimon](punch-narabimon) パンチナラビモン → **帕恩奇纳拉比莫恩**
+- [Reaper](reaper) リーパー → **利帕**
+- [Rokusho](rokusho) ロクショウ → **罗库西约乌**
+- [Sakuradamon](sakuradamon) サクラダモン → **萨库拉达莫恩**
+- [Shademon (Haruko Ver.)](shademon-haruko-ver) シェイドモン（ハルコＶｅｒ.） → **西埃伊多莫恩（哈鲁科Ｖｅｒ.）**
+- [Shoutmon (Black)](shoutmon-black) シャウトモン（黒） → **西亚乌托莫恩（黒）**
+- [Shoutmon (Yellow)](shoutmon-yellow) シャウトモン（黄） → **西亚乌托莫恩（黄）**
+- [Shoutmon X10](shoutmon-x10) シャウトモンＸ１０ → **西亚乌托莫恩Ｘ１０**
+- [Shoutmon X2 (Incomplete X3)](shoutmon-x2-incomplete-x3) シャウトモンＸ２ (不完全Ｘ４) → **西亚乌托莫恩Ｘ２ (不完全Ｘ４)**
+- [Skull Greymon: "G" Erosion Mode](skull-greymon-g-erosion-mode) スカルグレイモン：“G”侵食モード → **斯卡鲁古雷伊莫恩：“G”侵食莫多**
+- [Skull Knightmon (Blue)](skull-knightmon-blue) スカルナイトモン（青） → **斯卡鲁纳伊托莫恩（青）**
+- [Skull Knightmon (Red)](skull-knightmon-red) スカルナイトモン（赤） → **斯卡鲁纳伊托莫恩（赤）**
+- [Snakemon](snakemon) スネークモン → **斯内库莫恩**
+- [Tinpet](tinpet) ティンペット → **铁伊恩佩托**
+- [Urashimamon](urashimamon) ウラシマモン → **乌拉西玛莫恩**
+- [VR-Apocaly](vr-apocaly) VR-アポカリ → **VR-阿波卡利**
+- [VR-BWarGrey](vr-bwargrey) VR-ブラックウォーグレイ → **VR-布拉库乌奥古雷伊**
+- [VR-CDuke](vr-cduke) VR-デューククリムゾンモード → **VR-德尤库库利姆佐恩莫多**
+- [VR-Duke](vr-duke) VR-デューク → **VR-德尤库**
+- [VR-Imperial](vr-imperial) VR-インペリアル → **VR-伊恩佩利阿鲁**
+- [VR-Omega](vr-omega) VR-オメガ → **VR-奥梅加**
+- [VR-SaintGalgo](vr-saintgalgo) VR-セントガルゴ → **VR-塞恩托加鲁戈**
+- [VR-Sakuya](vr-sakuya) VR-サクヤ → **VR-萨库雅**
+- [VR-Venom](vr-venom) VR-ヴェノム → **VR-武埃诺姆**
+- [VR-WarGrey](vr-wargrey) VR-ウォーグレイ → **VR-乌奥古雷伊**
+- [Vipmon](vipmon) ヴァイプモン → **武阿伊普莫恩**
+- [Vitium Adult](vitium-adult) ヴィティウム成熟期 → **武伊铁伊乌姆成熟期**
+- [Vitium Baby](vitium-baby) ヴィティウム幼年期 → **武伊铁伊乌姆幼年期**
+- [Vitium Ultimate](vitium-ultimate) ヴィティウム究極体 → **武伊铁伊乌姆究極体**
+- [War Greymon: "G" Erosion Mode](war-greymon-g-erosion-mode) ウォーグレイモン：“G”侵食モード → **乌奥古雷伊莫恩：“G”侵食莫多**
+- [Yggdrasill Core](yggdrasill-core) イグドラシルコア → **伊古多拉西鲁科阿**
+- [Zino Garurumon](zino-garurumon) ジンオウガルルモン → **吉恩奥乌加鲁鲁莫恩**

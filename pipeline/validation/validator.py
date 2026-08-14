@@ -121,6 +121,18 @@ def validate(conn: sqlite3.Connection) -> dict[str, Any]:
     img_missing = conn.execute(
         "SELECT COUNT(*) FROM digimon WHERE main_image IS NULL OR TRIM(main_image)=''"
     ).fetchone()[0]
+    img_broken = conn.execute(
+        "SELECT COUNT(*) FROM digimon_image WHERE download_status = 'failed'"
+    ).fetchone()[0]
+    img_pending = conn.execute(
+        "SELECT COUNT(*) FROM digimon_image WHERE download_status = 'pending'"
+    ).fetchone()[0]
+    if img_broken:
+        issue("warning", "broken_image",
+              f"{img_broken} image downloads failed (broken image URLs)")
+    if img_pending:
+        issue("info", "image_pending",
+              f"{img_pending} images not yet downloaded")
 
     # --- coverage --------------------------------------------------------------
     def coverage(column: str) -> dict[str, int]:
@@ -207,6 +219,8 @@ def validate(conn: sqlite3.Connection) -> dict[str, Any]:
                 ).fetchone()[0],
                 "by_download_status": {r["download_status"]: r["c"] for r in img_stats},
                 "missing_main_image": img_missing,
+                "broken": img_broken,
+                "pending": img_pending,
             },
             "profiles": {
                 "zh_cn": coverage("profile_zh_cn"),
@@ -230,7 +244,9 @@ def to_markdown(report: dict[str, Any]) -> str:
     lines.append(f"- 英文名覆盖率：{c['en']['present']}/{c['en']['total']} ({c['en']['pct']}%)")
     lines.append(f"- 日文名覆盖率：{c['ja']['present']}/{c['ja']['total']} ({c['ja']['pct']}%)")
     lines.append(f"- 图片（主图存在）：{c['images']['digimon_with_main_image']}；"
-                 f"缺主图：{c['images']['missing_main_image']}")
+                 f"缺主图：{c['images']['missing_main_image']}"
+                 f"{f'；下载失败(broken)：{c['images']['broken']}' if c['images'].get('broken') else ''}"
+                 f"{f'；未下载：{c['images']['pending']}' if c['images'].get('pending') else ''}")
     lines.append(f"- 技能：{c['skills']['total_skills']} 个，"
                  f"有技能数码兽 {c['skills']['digimon_with_skills']} 只")
     lines.append(f"- 进化边：{report['graph']['edges']} 条")

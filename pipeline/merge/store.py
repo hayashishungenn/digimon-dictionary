@@ -413,11 +413,24 @@ class CanonicalStore:
     def _merge_image(self, digimon_id: int, rec: SourceDigimon) -> None:
         if not rec.image_url:
             return
+        # If a local cached file for this digimon already exists, preserve the
+        # 'downloaded' state across syncs (files are keyed digi_<id>_<name>).
+        local = None
+        status = "pending"
+        from pipeline.core.config import IMAGES_DIR
+
+        try:
+            for f in IMAGES_DIR.glob(f"digi_{digimon_id:05d}_*"):
+                local = str(f)
+                status = "downloaded"
+                break
+        except OSError:
+            pass
         self.conn.execute(
             """INSERT INTO digimon_image
-               (digimon_id, image_type, remote_url, source_page, download_status)
-               VALUES(?,?,?,?,?)""",
-            [digimon_id, "main_image", rec.image_url, rec.image_page, "pending"],
+               (digimon_id, image_type, remote_url, source_page, local_path, download_status)
+               VALUES(?,?,?,?,?,?)""",
+            [digimon_id, "main_image", rec.image_url, rec.image_page, local, status],
         )
 
     def _merge_first_appearance(self, digimon_id: int, rec: SourceDigimon) -> None:
