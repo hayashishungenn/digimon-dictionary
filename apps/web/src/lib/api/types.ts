@@ -137,6 +137,21 @@ export interface Relation {
 	name_en: string | null;
 }
 
+export interface GameStats {
+	game: string;
+	short_name: string;
+	hp: number | null;
+	sp: number | null;
+	atk: number | null;
+	def: number | null;
+	int: number | null;
+	spd: number | null;
+	memory: number | null;
+	slots: number | null;
+	extras: string | null;
+	source: string | null;
+}
+
 export interface Provenance {
 	field: string;
 	source: string | null;
@@ -152,6 +167,7 @@ export interface DigimonDetail extends DigimonListItem {
 	skills: Skill[];
 	aliases: Alias[];
 	images: Image[];
+	game_stats: GameStats[];
 	evolution: EvolutionGraph;
 	relations: Relation[];
 	profile: {

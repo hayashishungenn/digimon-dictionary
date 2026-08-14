@@ -126,6 +126,10 @@ def parse_ol_field(value: str) -> dict[str, str]:
         lang = lang_match.group(1).upper()
         rest = _LINK_RE.sub(lambda m: m.group(2) or m.group(1), seg)
         rest = re.sub(r"\{\{[^}]+\}\}", "", rest)
+        # drop italic gloss annotations like — ''Agumon'' or （''Agumon''）
+        rest = re.sub(r"'{2,}[^']*'{2,}", "", rest)
+        rest = re.sub(r"[—–].*$", "", rest)  # em/en-dash + anything after
+        rest = re.sub(r"[（）()].*$", "", rest)  # CJK/latin parens + after
         rest = rest.strip().strip("—–-").strip()
         if not rest:
             continue

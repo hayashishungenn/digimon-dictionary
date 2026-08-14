@@ -154,3 +154,28 @@ def test_relations_in_detail(client):
     d = client.get("/api/digimon/wargreymon").json()
     rel_types = {rel["relation_type"] for rel in d["relations"]}
     assert "same_species" in rel_types
+
+
+def test_game_stats_in_detail(client, fixture_db):
+    """game stats appear in detail but never touch world-view fields."""
+    from pipeline.core.models import SourceDigimon, SourceName
+    from pipeline.sources.digidb import import_game_stats
+
+    _path, conn = fixture_db
+    rec = SourceDigimon(
+        source="digidb", source_id="1",
+        names=[SourceName("Agumon", "en", status="community", source="digidb")],
+        extra={"game": "Digimon Story: Cyber Sleuth", "game_short": "cyber-sleuth",
+               "game_stats": {"hp": 1030, "sp": 200, "atk": 131, "def": 100, "int": 90,
+                              "spd": 95, "memory": 5, "equip slots": 2, "stage": "Rookie",
+                              "element": "Neutral"}},
+    )
+    import_game_stats(conn, [rec])
+
+    d = client.get("/api/digimon/agumon").json()
+    assert len(d["game_stats"]) == 1
+    gs = d["game_stats"][0]
+    assert gs["game"] == "Digimon Story: Cyber Sleuth"
+    assert gs["hp"] == 1030
+    # world-view level untouched (still child from the fixture)
+    assert d["level"] == "child"

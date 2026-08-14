@@ -213,6 +213,7 @@ def get_digimon_full(conn: sqlite3.Connection, digimon_id: int) -> dict[str, Any
     ]
     base["skills"] = get_skills(conn, digimon_id)
     base["aliases"] = get_aliases(conn, digimon_id)
+    base["game_stats"] = get_game_stats(conn, digimon_id)
     base["images"] = [
         dict(r)
         for r in conn.execute(
@@ -346,6 +347,20 @@ def get_relations(conn: sqlite3.Connection, digimon_id: int) -> list[dict[str, A
     ).fetchall()
     out.extend(dict(r) for r in rev)
     return out
+
+
+def get_game_stats(conn: sqlite3.Connection, digimon_id: int) -> list[dict[str, Any]]:
+    """Per-game stats, isolated from world-view data (spec §10)."""
+    return [
+        dict(r)
+        for r in conn.execute(
+            """SELECT g.name AS game, g.short_name, s.hp, s.sp, s.atk, s.def, s.int, s.spd,
+                      s.memory, s.slots, s.extras, s.source
+               FROM game_digimon_stats s JOIN game g ON g.id = s.game_id
+               WHERE s.digimon_id = ? ORDER BY g.name""",
+            [digimon_id],
+        )
+    ]
 
 
 def get_provenance(conn: sqlite3.Connection, entity_type: str, entity_id: int) -> list[dict[str, Any]]:

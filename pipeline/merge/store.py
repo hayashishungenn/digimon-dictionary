@@ -356,7 +356,7 @@ class CanonicalStore:
         if lang == "romanized":
             return AliasType.ROMANIZATION.value
         if lang in ("zh_hk", "zh_tw"):
-            return AliasType.GAME_TRANSLATION.value
+            return AliasType.ALTERNATIVE_SPELLING.value
         return AliasType.OFFICIAL.value
 
     def _merge_attributes(self, digimon_id: int, rec: SourceDigimon) -> None:

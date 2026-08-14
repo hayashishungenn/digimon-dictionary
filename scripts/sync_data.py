@@ -139,8 +139,9 @@ def main(argv: list[str] | None = None) -> int:
             except Exception as exc:  # noqa: BLE001
                 logger.error("source %s failed: %s", name, exc)
 
-        # 2. entity matching (same order as ingestion)
-        order = [s for s in ["dapi", "digimons_net", "official", "wikimon", "digidb"] if s in records_by_source]
+        # 2. entity matching (same order as ingestion; digidb is NOT matched —
+        #    it is a game-stats overlay that only attaches to existing entities)
+        order = [s for s in ["dapi", "digimons_net", "official", "wikimon"] if s in records_by_source]
         for name in order:
             for rec in records_by_source[name]:
                 matcher.add(rec)
@@ -165,6 +166,13 @@ def main(argv: list[str] | None = None) -> int:
             rel_count += resolver.add_relations_for_entity(entity)
         conn.commit()
         logger.info("evolution edges: %d, relations: %d", edge_count, rel_count)
+
+        # 4b. game stats (digidb overlay) — separate from world-view data
+        if "digidb" in records_by_source:
+            from pipeline.sources.digidb import import_game_stats
+
+            import_game_stats(conn, records_by_source["digidb"])
+            logger.info("game stats imported (game: cyber-sleuth)")
 
         # 5. write review queue + conflicts
         for item in matcher.review_queue:

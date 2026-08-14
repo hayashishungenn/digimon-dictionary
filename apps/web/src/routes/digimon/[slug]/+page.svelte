@@ -211,6 +211,28 @@
 		当前深度 {evoDepth} / 最大 4
 	</div>
 
+	{#if data.game_stats.length > 0}
+		<div class="section-title">游戏数据 Game Stats</div>
+		<div class="faint" style="font-size:12px;margin-bottom:8px">
+			世界观属性与游戏数值完全分离（规格 §10）。以下为该游戏内的独立数值。
+		</div>
+		{#each data.game_stats as gs}
+			<details class="game-block" open>
+				<summary>{gs.game}</summary>
+				<div class="stat-grid-small">
+					{#if gs.hp !== null}<span class="gs-cell"><span class="k">HP</span><span class="v">{gs.hp}</span></span>{/if}
+					{#if gs.sp !== null}<span class="gs-cell"><span class="k">SP</span><span class="v">{gs.sp}</span></span>{/if}
+					{#if gs.atk !== null}<span class="gs-cell"><span class="k">ATK</span><span class="v">{gs.atk}</span></span>{/if}
+					{#if gs.def !== null}<span class="gs-cell"><span class="k">DEF</span><span class="v">{gs.def}</span></span>{/if}
+					{#if gs.int !== null}<span class="gs-cell"><span class="k">INT</span><span class="v">{gs.int}</span></span>{/if}
+					{#if gs.spd !== null}<span class="gs-cell"><span class="k">SPD</span><span class="v">{gs.spd}</span></span>{/if}
+					{#if gs.memory !== null}<span class="gs-cell"><span class="k">内存</span><span class="v">{gs.memory}</span></span>{/if}
+					{#if gs.slots !== null}<span class="gs-cell"><span class="k">槽位</span><span class="v">{gs.slots}</span></span>{/if}
+				</div>
+			</details>
+		{/each}
+	{/if}
+
 	{#if data.relations.length > 0}
 		<div class="section-title">相关形态 Related Forms</div>
 		<div class="evo-row-wrap">
@@ -381,5 +403,41 @@
 	}
 	details summary {
 		cursor: pointer;
+	}
+	.game-block {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		padding: 10px 14px;
+		margin-bottom: 8px;
+	}
+	.game-block summary {
+		font-weight: 700;
+		font-size: 13px;
+		color: var(--text-dim);
+	}
+	.stat-grid-small {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+		gap: 8px;
+		margin-top: 10px;
+	}
+	.gs-cell {
+		background: var(--surface-2);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		padding: 6px 8px;
+		text-align: center;
+	}
+	.gs-cell .k {
+		font-family: var(--mono);
+		font-size: 10px;
+		color: var(--text-faint);
+		display: block;
+	}
+	.gs-cell .v {
+		font-size: 15px;
+		font-weight: 700;
+		color: var(--accent);
 	}
 </style>
