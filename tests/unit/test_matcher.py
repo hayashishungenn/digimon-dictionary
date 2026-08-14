@@ -91,3 +91,41 @@ def test_matcher_external_id_linking():
     # a second dapi record pointing at same id resolves by external id
     slug = m.add(_dapi("Agumon", 1))
     assert slug == "agumon"
+
+
+def test_digimons_ja_not_used_for_matching():
+    """digimons' katakana column has errors (Styracomon listed with Stingmon's
+    スティングモン). Its ja is display-only (matchable=False), so it can never
+    hijack entity matching — Stingmon and Styracomon stay correctly separate."""
+    m = Matcher()
+    m.add(_dapi("Stingmon", 336))
+    # digimons styracomon: ja (スティングモン) is non-matchable
+    m.add(
+        SourceDigimon(
+            source="digimons_net", source_id="styracomon",
+            names=[
+                SourceName("刺盾角蜥兽", "zh_cn", status="community", source="digimons_net"),
+                SourceName("Styracomon", "en", status="community", source="digimons_net"),
+                SourceName("スティングモン", "ja", status="community", source="digimons_net", matchable=False),
+            ],
+            extra={},
+        )
+    )
+    # digimons stingmon: en must land on the dapi stingmon entity
+    slug = m.add(
+        SourceDigimon(
+            source="digimons_net", source_id="stingmon",
+            names=[
+                SourceName("刺钉兽", "zh_cn", status="community", source="digimons_net"),
+                SourceName("Stingmon", "en", status="community", source="digimons_net"),
+                SourceName("スティングモン", "ja", status="community", source="digimons_net", matchable=False),
+            ],
+            extra={},
+        )
+    )
+    assert slug == "stingmon"
+    assert len(m.entities) == 2  # stingmon + styracomon, no duplicates
+    # digimons ja still carried on the entity for display
+    slugs = {s for r in m.entities["stingmon"].records for s in
+             [n.value for n in r.names if n.language == "ja"]}
+    assert "スティングモン" in slugs

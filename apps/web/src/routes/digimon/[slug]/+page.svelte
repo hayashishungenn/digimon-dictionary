@@ -88,6 +88,9 @@
 			<div class="detail-id mono">#{data.id} · {data.canonical_slug}</div>
 			<h1 class="detail-h1">
 				{data.names.zh_cn ?? '—'}
+				{#if data.names.zh_cn_status === 'transliteration' || data.names.zh_cn_status === 'unverified'}
+					<span class="name-tag" style="font-size:11px;vertical-align:8px" title="此中文名为音译/自动生成，未验证，非官方定名">音译·未验证</span>
+				{/if}
 				{#if data.names.ja}<span class="ja">{data.names.ja}</span>{/if}
 			</h1>
 			<div class="detail-sub">

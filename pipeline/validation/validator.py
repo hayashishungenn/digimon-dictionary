@@ -98,6 +98,30 @@ def validate(conn: sqlite3.Connection) -> dict[str, Any]:
     for r in dup_edges:
         issue("warning", "duplicate_evolution_edge", f"edge {r[0]}->{r[1]} ({r[2]}) appears {r[3]}x")
 
+    # --- near-duplicate entities (same ja + same zh, different en) ----------
+    import re as _re
+
+    dup_groups = conn.execute(
+        """SELECT name_ja, name_zh_cn, COUNT(*) c
+           FROM digimon
+           WHERE name_ja IS NOT NULL AND TRIM(name_ja) != ''
+             AND name_zh_cn IS NOT NULL AND TRIM(name_zh_cn) != ''
+           GROUP BY name_ja, name_zh_cn HAVING c > 1"""
+    ).fetchall()
+    for g in dup_groups:
+        members = conn.execute(
+            """SELECT canonical_slug, name_en FROM digimon
+               WHERE name_ja = ? AND name_zh_cn = ? ORDER BY name_en""",
+            [g["name_ja"], g["name_zh_cn"]],
+        ).fetchall()
+        en_set = {m["name_en"] for m in members}
+        if len(en_set) > 1:  # same ja+zh but different English names → likely duplicate
+            issue(
+                "warning", "duplicate_entity",
+                f"{g['name_ja']} / {g['name_zh_cn']} appears as {len(members)} entities: "
+                f"{', '.join(m['canonical_slug'] for m in members)}",
+            )
+
     # --- orphan references ---------------------------------------------------
     for tbl, fk in (("digimon_skill", "skill_id"), ("digimon_alias", "digimon_id")):
         orphans = conn.execute(

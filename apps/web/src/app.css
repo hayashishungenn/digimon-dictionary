@@ -359,6 +359,19 @@ button {
 	font-size: 11px;
 }
 
+.name-tag {
+	display: inline-block;
+	margin-left: 5px;
+	font-family: var(--mono);
+	font-size: 9px;
+	font-weight: 500;
+	color: var(--accent-2);
+	border: 1px solid rgba(124, 92, 255, 0.4);
+	border-radius: 4px;
+	padding: 0 4px;
+	vertical-align: 2px;
+}
+
 .digimon-card .meta {
 	display: flex;
 	flex-wrap: wrap;

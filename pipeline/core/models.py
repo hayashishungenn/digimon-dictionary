@@ -17,6 +17,7 @@ class SourceName:
     language: str  # zh_cn | zh_hk | zh_tw | en | en_dub | ja | romanized
     status: str | None = None  # official|community|transliteration|unverified
     source: str | None = None
+    matchable: bool = True  # False = display-only, not used for entity matching
 
 
 @dataclass

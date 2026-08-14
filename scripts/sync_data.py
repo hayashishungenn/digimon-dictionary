@@ -197,7 +197,11 @@ def main(argv: list[str] | None = None) -> int:
                 matcher.add(rec)
         logger.info("entities: %d (review: %d)", len(matcher.entities), len(matcher.review_queue))
 
-        # 3. merge entities -> DB
+        # 3. merge entities -> DB (full rebuild: clear digimon + cascading
+        #    derived rows so stale entities from a different source set or a
+        #    previous matcher never linger)
+        conn.execute("DELETE FROM digimon")
+        conn.commit()
         store = CanonicalStore(conn)
         for slug, entity in matcher.entities.items():
             store.upsert_entity(entity)

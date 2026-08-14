@@ -24,6 +24,13 @@ logger = logging.getLogger(__name__)
 BASE = "http://www.digimons.net/digimon"
 _SLUG_RE = re.compile(r"([^/]+)/index\.html")
 
+# Known errors in digimons.net's katakana column (corrected here so the ja name
+# can be used for entity matching without hijacking another digimon).
+# Verified against Wikimon / official reference.
+_JA_CORRECTIONS: dict[str, str] = {
+    "styracomon": "スティラコモン",  # digimons lists Styracomon as スティングモン (Stingmon's)
+}
+
 
 class DigimonsNetAdapter(SourceAdapter):
     source = "digimons_net"
@@ -69,7 +76,7 @@ class DigimonsNetAdapter(SourceAdapter):
             seen.add(slug)
 
             level = tds[1].get_text(" ", strip=True)
-            ja = tds[2].get_text(" ", strip=True)
+            ja = _JA_CORRECTIONS.get(slug, tds[2].get_text(" ", strip=True))
             en = tds[3].get_text(" ", strip=True)
             zh = tds[4].get_text(" ", strip=True)
 

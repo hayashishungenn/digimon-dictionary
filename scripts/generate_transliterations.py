@@ -54,11 +54,19 @@ def katakana_to_hanzi(text: str) -> str:
             v = _KATAKANA[ch]
             if v:
                 out.append(v)
-        elif "ぁ" <= ch <= "ん":  # hiragana → use katakana reading
-            out.append(ch)  # keep as-is (rare in names)
+        elif "ぁ" <= ch <= "ん":  # hiragana — not a loanword token
+            return ""
         else:
-            out.append(ch)  # latin/kanji untouched
+            return ""  # kanji/latin/digits — not pure katakana
     return "".join(out)
+
+
+def is_pure_katakana(text: str, max_len: int = 8) -> bool:
+    """Only pure-katakana names up to `max_len` characters transliterate cleanly;
+    longer or mixed-script names produce unusable results (spec §55)."""
+    if not text or len(text) > max_len:
+        return False
+    return all(ch in _KATAKANA for ch in text)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -80,10 +88,13 @@ def main(argv: list[str] | None = None) -> int:
              "> **全部标记 unverified（未验证），不可当作官方/社区定名**。", ""]
     applied = 0
     for r in rows:
-        gen = katakana_to_hanzi(r["name_ja"])
-        if not gen or gen == r["name_ja"]:
+        ja = r["name_ja"]
+        if not is_pure_katakana(ja, max_len=8):
+            continue  # mixed-script or too long → leave NULL (honest)
+        gen = katakana_to_hanzi(ja)
+        if not gen or gen == ja:
             continue  # nothing sensible generated
-        lines.append(f"- [{r['name_en']}]({r['canonical_slug']}) {r['name_ja']} → **{gen}**")
+        lines.append(f"- [{r['name_en']}]({r['canonical_slug']}) {ja} → **{gen}**")
         if args.apply:
             conn.execute(
                 """UPDATE digimon SET name_zh_cn=?, name_zh_cn_status='transliteration',

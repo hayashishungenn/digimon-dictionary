@@ -25,7 +25,12 @@
 			<PlaceholderImage src={imgSrc(item)} alt={item.name_zh_cn ?? item.name_en ?? item.canonical_slug} />
 		</span>
 		<span class="info">
-			<span class="name-zh">{item.name_zh_cn ?? '—'}</span>
+			<span class="name-zh">
+				{item.name_zh_cn ?? '—'}
+				{#if item.name_zh_cn_status === 'transliteration' || item.name_zh_cn_status === 'unverified'}
+					<span class="name-tag" title="此中文名为音译/未验证，非官方定名">音译</span>
+				{/if}
+			</span>
 			<span class="name-en">
 				{item.name_en ?? item.canonical_slug}
 				{#if item.name_ja}<span class="name-ja"> · {item.name_ja}</span>{/if}

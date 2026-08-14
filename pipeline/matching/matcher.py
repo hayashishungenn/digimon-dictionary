@@ -80,11 +80,12 @@ class Matcher:
             self._index[key].append(slug)
 
     def seed_entity(self, slug: str, record: SourceDigimon) -> None:
-        """Register an entity and index its names + external id."""
+        """Register an entity and index its matchable names + external id."""
         entity = MatchedEntity(canonical_slug=slug, records=[record])
         self.entities[slug] = entity
         for n in record.names:
-            self._add_name(slug, n.value)
+            if n.matchable:
+                self._add_name(slug, n.value)
         self._add_name(slug, record.extra.get("alt_name") or "")
         self._external[(record.source, record.source_id)] = slug
 
@@ -109,7 +110,7 @@ class Matcher:
             return ext
 
         names = record.names
-        keys = [naming.normalize_key(n.value) for n in names if n.value]
+        keys = [naming.normalize_key(n.value) for n in names if n.value and n.matchable]
         if not keys:
             return None
 
@@ -117,7 +118,7 @@ class Matcher:
         candidates: list[str] = []
         for priority in ("ja", "en", "romanized", "zh_cn", "en_dub", "zh_hk", "zh_tw"):
             for n in names:
-                if n.language != priority:
+                if n.language != priority or not n.matchable:
                     continue
                 hits = self._lookup(naming.normalize_key(n.value))
                 if hits:
@@ -160,7 +161,8 @@ class Matcher:
             logger.info("new entity: %s (source %s %s)", slug, record.source, record.source_id)
         self.entities[slug].records.append(record)
         for n in record.names:
-            self._add_name(slug, n.value)
+            if n.matchable:
+                self._add_name(slug, n.value)
         self._external[(record.source, record.source_id)] = slug
         # register official→dapi cross-source id linking via names handled above
         return slug
