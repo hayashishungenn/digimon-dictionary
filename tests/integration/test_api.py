@@ -139,6 +139,13 @@ def test_search_english_partial(client):
     assert any(i["canonical_slug"] == "wargreymon" for i in items)
 
 
+def test_search_space_variant(client):
+    # §35: "War Greymon" (with space) must hit the WarGreymon entity
+    r = client.get("/api/search", params={"q": "War Greymon"})
+    items = r.json()["items"]
+    assert any(i["canonical_slug"] == "wargreymon" for i in items)
+
+
 def test_search_returns_same_entity_across_languages(client):
     def find(q):
         return client.get("/api/search", params={"q": q}).json()["items"][0]["id"]

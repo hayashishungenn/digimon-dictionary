@@ -482,17 +482,21 @@ def search_digimon(
 
 
 def _search_variants(q: str) -> list[str]:
-    """Query variants for matching: original + simplified/traditional CJK."""
+    """Query variants for matching: original + simplified/traditional CJK +
+    punctuation-stripped form (so "War Greymon" hits "WarGreymon", §35)."""
+    import re as _re
+
     from pipeline.core import naming
 
     variants = [q]
+    stripped = _re.sub(r"[\s\-_()（）·]+", "", q)
+    if stripped and stripped != q:
+        variants.append(stripped)
     if _has_cjk(q):
-        s = naming.to_simplified(q)
-        t = naming.to_traditional(q)
-        if s not in variants:
-            variants.append(s)
-        if t not in variants:
-            variants.append(t)
+        for conv in (naming.to_simplified, naming.to_traditional):
+            v = conv(q)
+            if v not in variants:
+                variants.append(v)
     return variants
 
 
