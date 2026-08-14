@@ -6,8 +6,8 @@ export default defineConfig({
 	testDir: './tests/e2e',
 	fullyParallel: false,
 	workers: 1, // serial: shared DB state + API server
-	// a single retry absorbs cold-start/preview races against external image CDNs
-	retries: 1,
+	// two retries absorb cold-start / external image-CDN races
+	retries: 2,
 	reporter: [['list'], ['html', { open: 'never' }]],
 	use: {
 		baseURL: 'http://localhost:4173',
