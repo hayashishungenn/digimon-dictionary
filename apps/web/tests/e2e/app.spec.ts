@@ -110,6 +110,16 @@ test('empty state shows friendly message', async ({ page }) => {
 	}
 });
 
+test('search 战暴 (fan abbreviation) resolves to WarGreymon', async ({ page }) => {
+	// §35: fan shorthand must resolve via fan_translation aliases
+	await page.goto('/');
+	await page.getByRole('textbox', { name: '搜索数码兽' }).fill('战暴');
+	const card = page.locator('[data-testid="digimon-card"]').first();
+	await expect(card).toBeVisible();
+	const href = await card.locator('a.card-link').getAttribute('href');
+	expect(href).toBe('/digimon/war-greymon');
+});
+
 test('detail page shows representative primary evolution line', async ({ page }) => {
 	// Agumon has Wikimon primary-line edges (Koromon → Agumon → Greymon ...)
 	await page.goto('/digimon/agumon');

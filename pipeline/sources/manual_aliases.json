@@ -1,0 +1,12 @@
+{
+  "_comment": "Curated Chinese fan abbreviations/aliases (spec §7 alias_type=fan_translation, §35 部分匹配). Each maps a well-known fandom shorthand to a canonical_slug. Only unambiguous, widely-used abbreviations are included; never the name of a human character or a group.",
+  "aliases": [
+    { "alias": "战暴", "canonical_slug": "war-greymon" },
+    { "alias": "战斗暴龙", "canonical_slug": "war-greymon" },
+    { "alias": "奥叔", "canonical_slug": "omegamon" },
+    { "alias": "奥米加", "canonical_slug": "omegamon" },
+    { "alias": "帝龙", "canonical_slug": "imperialdramon" },
+    { "alias": "阿尔法", "canonical_slug": "alphamon" },
+    { "alias": "亚古", "canonical_slug": "agumon" }
+  ]
+}

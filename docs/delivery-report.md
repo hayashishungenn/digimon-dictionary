@@ -90,8 +90,8 @@ uv run python scripts/download_images.py
 
 ## 已知限制（诚实声明）
 
-- 81.2% 三语言完整率：约 325 只扩展/冷门数码兽缺简体中文名（无可信中文来源，不编造）
-- "战暴"等非官方昵称/缩写不在数据中（不编造来源外的别名）
-- 游戏数值仅 Cyber Sleuth 一作（327/341）；其他作品可依 `game_digimon_stats` 表继续导入
+- 81.2% 三语言完整率：约 325 只扩展/冷门数码兽缺简体中文名（无可靠来源；提供 `scripts/generate_transliterations.py` 可选音译并标 unverified）
+- 部分冷门缩写/昵称不在数据中（已内置常见粉丝别名如"战暴/奥叔"；其余不编造）
+- 游戏数值仅 Cyber Sleuth 一作（327/341）；其他作品可依 `game_digimon_stats` / `game_skill` 表继续导入
 - Wikimon 的 4 条待人工确认（ambiguous names）
 - 447 条跨源数据冲突已记录未静默（见 `docs/data-conflicts.md` 供人工裁决）

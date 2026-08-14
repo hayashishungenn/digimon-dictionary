@@ -63,6 +63,34 @@ def load_source(name: str):
     raise ValueError(f"unknown source: {name}")
 
 
+def _load_fan_aliases(conn) -> None:
+    """Register curated Chinese fan abbreviations (spec §7 / §35)."""
+    import json
+
+    from pipeline.core.config import ROOT
+
+    path = ROOT / "pipeline" / "sources" / "manual_aliases.json"
+    if not path.exists():
+        return
+    data = json.loads(path.read_text("utf-8"))
+    by_slug = {r["canonical_slug"]: r["id"] for r in conn.execute("SELECT id, canonical_slug FROM digimon")}
+    added = 0
+    for item in data.get("aliases", []):
+        digimon_id = by_slug.get(item["canonical_slug"])
+        if digimon_id is None:
+            continue
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO digimon_alias
+               (digimon_id, alias, language, alias_type, source, verified)
+               VALUES(?,?,?,?,?,?)""",
+            [digimon_id, item["alias"], "zh_cn", "fan_translation", "manual", 0],
+        )
+        added += cur.rowcount
+    if added:
+        logger.info("registered %d fan aliases", added)
+    conn.commit()
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="DigiDex data sync pipeline")
     ap.add_argument(
@@ -192,6 +220,9 @@ def main(argv: list[str] | None = None) -> int:
         rel_inferred = infer_relations(conn)
         if rel_inferred:
             logger.info("inferred related-form relations: %d", rel_inferred)
+
+        # 4b. curated fan aliases (spec §7 fan_translation, §35 部分匹配)
+        _load_fan_aliases(conn)
 
         # 4b. game stats (digidb overlay) — separate from world-view data
         if "digidb" in records_by_source:

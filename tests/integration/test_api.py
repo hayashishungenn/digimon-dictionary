@@ -110,6 +110,23 @@ def test_search_traditional_chinese_converts(client):
     assert any(i["canonical_slug"] == "agumon" for i in items)
 
 
+def test_search_fan_alias(client, fixture_db):
+    # §35: fan abbreviation "战暴" resolves via fan_translation alias
+    from pipeline.core.schema import connect as _connect
+
+    _path, conn = fixture_db
+    by_slug = {r["canonical_slug"]: r["id"] for r in conn.execute("SELECT id, canonical_slug FROM digimon")}
+    conn.execute(
+        """INSERT OR IGNORE INTO digimon_alias
+           (digimon_id, alias, language, alias_type, source, verified)
+           VALUES(?,?,?,?,?,?)""",
+        [by_slug["wargreymon"], "战暴", "zh_cn", "fan_translation", "manual", 0],
+    )
+    conn.commit()
+    r = client.get("/api/search", params={"q": "战暴"})
+    assert any(i["canonical_slug"] == "wargreymon" for i in r.json()["items"])
+
+
 def test_search_japanese(client):
     r = client.get("/api/search", params={"q": "アグモン"})
     items = r.json()["items"]
