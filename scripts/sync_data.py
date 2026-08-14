@@ -134,6 +134,25 @@ def main(argv: list[str] | None = None) -> int:
                 records = adapter.fetch(fetcher, force=args.force)
                 logger.info("%s: %d records", name, len(records))
                 records_by_source[name] = records
+                # incremental signal (§47): record content_hash per source.
+                # We still re-process for correctness (merge is idempotent and
+                # fast via the HTTP cache), but the hash lets callers / future
+                # runs detect unchanged sources.
+                import hashlib
+                import json as _json
+
+                digest = hashlib.sha256(
+                    _json.dumps(
+                        [[r.source_id, [n.value for n in r.names]] for r in records],
+                        default=str, sort_keys=True,
+                    ).encode("utf-8")
+                ).hexdigest()[:16]
+                prev = state.get(name).get("content_hash")
+                state.set(name, content_hash=digest, last_seen_at=__import__("datetime").datetime.now().isoformat(timespec="seconds"))
+                if prev == digest and not args.force:
+                    logger.info("%s: content unchanged (hash %s)", name, digest)
+                else:
+                    logger.info("%s: content hash %s (changed)", name, digest)
             except ImportError as exc:
                 logger.warning("source %s not implemented yet: %s", name, exc)
             except Exception as exc:  # noqa: BLE001
