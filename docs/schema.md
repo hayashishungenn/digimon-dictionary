@@ -23,12 +23,12 @@
 | `evolution_edge` | 进化边（from→to, evolution_type, condition, source, confidence, is_primary_line） |
 | `digimon_relation` | 非进化关联（variant/x_antibody/mode_change/...） |
 | `digimon_image` | 图片记录（类型、URL、本地路径、sha256、下载状态、版权备注） |
-| `provenance` | 逐字段出处 |
-| `data_conflict` | 数据冲突（source_a vs source_b + resolution） |
+| `provenance` | 逐字段出处（`value_hash` 为字段真实规范化值哈希） |
+| `data_conflict` | 数据冲突（source_a/b 及其 source_id、chosen_value/source、全部候选 JSON、review_status、resolution） |
 | `manual_review_queue` | 需人工确认的实体/关系 |
 | `game` / `game_digimon_stats` | 游戏及该游戏内的数值（hp/sp/atk/def/int/spd/memory/slots/extras） |
 | `snapshot` | 数据集快照（snapshot_date、official/extended/total count） |
-| `source_sync` | 各源同步状态（content_hash → 增量跳过） |
+| `source_sync` | 各源同步状态（run_id、status、records/parsed/failed、raw_completeness、完整 payload_hash、error_summary） |
 | `digimon_fts` | FTS5 搜索索引（canonical_slug + 三语言名 + aliases） |
 
 ## 关键枚举（规范化后）
