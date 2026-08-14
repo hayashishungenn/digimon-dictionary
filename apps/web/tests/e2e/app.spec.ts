@@ -110,6 +110,37 @@ test('empty state shows friendly message', async ({ page }) => {
 	}
 });
 
+test('official / extended toggle filters the grid', async ({ page }) => {
+	await page.goto('/');
+	await page.waitForSelector('[data-testid="digimon-card"]');
+	await page.waitForTimeout(400);
+	const countAll = await page.locator('.result-count').textContent();
+	await page.getByRole('button', { name: '官方图鉴' }).click();
+	await page.waitForTimeout(500);
+	const countOfficial = await page.locator('.result-count').textContent();
+	await page.getByRole('button', { name: '扩展图鉴' }).click();
+	await page.waitForTimeout(500);
+	const countExtended = await page.locator('.result-count').textContent();
+	// official-only and extended-only each are subsets of the full set
+	const nAll = parseInt(countAll?.match(/\d+/)?.at(0) ?? '0');
+	const nOff = parseInt(countOfficial?.match(/\d+/)?.at(0) ?? '0');
+	const nExt = parseInt(countExtended?.match(/\d+/)?.at(0) ?? '0');
+	expect(nOff).toBeGreaterThan(0);
+	expect(nExt).toBeGreaterThan(0);
+	expect(nOff + nExt).toBe(nAll);
+});
+
+test('about page shows runtime snapshot counts', async ({ page }) => {
+	await page.goto('/about');
+	await expect(page.getByText('数据集快照 Dataset Snapshot')).toBeVisible();
+	// counts come from the live API, never hardcoded
+	await expect(page.locator('.stat-v').first()).toBeVisible();
+	const official = page.locator('.stat-cell').nth(0).locator('.stat-v');
+	const total = page.locator('.stat-cell').nth(2).locator('.stat-v');
+	await expect(official).not.toHaveText('0');
+	await expect(total).not.toHaveText('0');
+});
+
 test('search 战暴 (fan abbreviation) resolves to WarGreymon', async ({ page }) => {
 	// §35: fan shorthand must resolve via fan_translation aliases
 	await page.goto('/');
