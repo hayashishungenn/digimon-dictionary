@@ -70,3 +70,31 @@ def test_infer_relations(tmp_path):
     # never self-relation
     assert not any(r["f"] == r["t"] for r in rows)
     assert added == len(rows)
+
+
+def test_inferred_relation_note_records_rule(tmp_path):
+    """Inferred relations keep source='inferred' and a note stating the slug
+    rule — never presented as an official fact."""
+    conn = _setup_conn(tmp_path)
+    infer_relations(conn)
+    row = conn.execute(
+        "SELECT source, note FROM digimon_relation WHERE relation_type='black_variant' LIMIT 1"
+    ).fetchone()
+    assert row["source"] == "inferred"
+    assert "inferred from slug rule" in row["note"]
+    assert "agumon" in row["note"]
+
+
+def test_missing_base_goes_to_review(tmp_path):
+    """A variant slug whose base entity does not exist is surfaced for review,
+    not silently dropped."""
+    conn = _setup_conn(tmp_path)
+    store = CanonicalStore(conn)
+    store.upsert_entity(MatchedEntity(canonical_slug="phantmon-x-antibody",
+                                      records=[_rec("phantmon-x-antibody", "Phantmon (X-Antibody)")]))
+    store.commit()
+    infer_relations(conn)
+    reviews = conn.execute("SELECT reason, detail FROM manual_review_queue").fetchall()
+    assert any("implies base" in r["reason"] for r in reviews)
+    detail = next(r for r in reviews if "implies base" in r["reason"])["detail"]
+    assert "phantmon" in detail  # the implied base is named in the review detail

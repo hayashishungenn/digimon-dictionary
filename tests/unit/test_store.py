@@ -1,8 +1,6 @@
 """Unit tests for the canonical store (merge) and evolution resolver."""
 from __future__ import annotations
 
-import sqlite3
-
 import pytest
 
 from pipeline.core.models import MatchedEntity, SourceDigimon, SourceName, SourceSkill
@@ -141,3 +139,23 @@ def test_fts_rebuild(store_conn):
     store_conn.commit()
     rows = store_conn.execute("SELECT rowid FROM digimon_fts WHERE digimon_fts MATCH 'Agumon'").fetchall()
     assert len(rows) == 1
+
+
+def test_resolver_reports_unknown_and_self_refs(store_conn):
+    """The resolver returns stats and never silently drops unresolved/self refs:
+    a record evolving to an unknown id and to itself is reported, the resolvable
+    edge is still written."""
+    agumon = _rec("dapi", "1", "Agumon", evolves_to=["2", "3", "1"])
+    greymon = _rec("dapi", "3", "Greymon")
+    _upsert(store_conn, "agumon", agumon)
+    _upsert(store_conn, "greymon", greymon)
+    res = EvolutionResolver(store_conn)
+    stats = res.add_edges_for_entity(MatchedEntity(canonical_slug="agumon", records=[agumon]))
+    store_conn.commit()
+    assert stats["edges"] == 1            # -> greymon (id 3) resolved
+    assert len(stats["unknown"]) == 1     # id 2 not in the dataset
+    assert len(stats["self"]) == 1        # id 1 is agumon itself
+    assert stats["unknown"][0][2] == "2"
+    # the resolved edge exists
+    edges = store_conn.execute("SELECT COUNT(*) FROM evolution_edge").fetchone()[0]
+    assert edges == 1

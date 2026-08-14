@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from typing import Any
 
 from pipeline.core import naming
 from pipeline.core.models import MatchedEntity
@@ -132,12 +133,17 @@ class EvolutionResolver:
                  1 if is_primary else 0],
             )
 
-    def add_edges_for_entity(self, entity: MatchedEntity) -> int:
-        """Write all evolution edges described by an entity's records."""
-        added = 0
+    def add_edges_for_entity(self, entity: MatchedEntity) -> dict[str, Any]:
+        """Write all evolution edges described by an entity's records.
+
+        Returns stats ``{"edges": n, "unknown": [...], "self": [...]}``. Refs
+        that cannot be resolved (unknown target) and self-evolutions are never
+        silently dropped — the caller surfaces them in the review queue.
+        """
+        stats: dict[str, Any] = {"edges": 0, "unknown": [], "self": []}
         from_id = self._by_slug.get(entity.canonical_slug)
         if from_id is None:
-            return 0
+            return stats
         for rec in entity.records:
             primary_to = set(rec.extra.get("primary_to", []) or [])
             primary_from = set(rec.extra.get("primary_from", []) or [])
@@ -145,39 +151,54 @@ class EvolutionResolver:
                 if _is_junk_evo(ref):
                     continue
                 to_id = self.resolve_source(rec.source, ref)
-                if to_id is None or to_id == from_id:
+                if to_id is None:
+                    stats["unknown"].append((rec.source, rec.source_id, ref))
+                    continue
+                if to_id == from_id:
+                    stats["self"].append((rec.source, rec.source_id, ref))
                     continue
                 cond = rec.conditions.get(f"to:{ref}") or ""
                 etype = _guess_evolution_type(cond) if cond else "normal"
                 self._upsert_edge(from_id, to_id, etype, cond or None, rec.source,
                                   is_primary=ref in primary_to)
-                added += 1
+                stats["edges"] += 1
             for ref in rec.evolves_from:
                 if _is_junk_evo(ref):
                     continue
                 to_id = self.resolve_source(rec.source, ref)
-                if to_id is None or to_id == from_id:
+                if to_id is None:
+                    stats["unknown"].append((rec.source, rec.source_id, ref))
+                    continue
+                if to_id == from_id:
+                    stats["self"].append((rec.source, rec.source_id, ref))
                     continue
                 cond = rec.conditions.get(f"from:{ref}") or ""
                 etype = _guess_evolution_type(cond) if cond else "normal"
                 self._upsert_edge(to_id, from_id, etype, cond or None, rec.source,
                                   is_primary=ref in primary_from)
-                added += 1
-        return added
+                stats["edges"] += 1
+        return stats
 
-    def add_relations_for_entity(self, entity: MatchedEntity) -> int:
-        """Write non-evolution relations (official 'related', wikimon variants)."""
-        added = 0
+    def add_relations_for_entity(self, entity: MatchedEntity) -> dict[str, Any]:
+        """Write non-evolution relations (official 'related', wikimon variants).
+
+        Returns ``{"relations": n, "unknown": [...]}``; unresolvable targets
+        are surfaced for review rather than silently dropped.
+        """
+        stats: dict[str, Any] = {"relations": 0, "unknown": []}
         from_id = self._by_slug.get(entity.canonical_slug)
         if from_id is None:
-            return 0
+            return stats
         for rec in entity.records:
             for rel in rec.extra.get("related", []) or []:
                 target = rel.get("slug") or rel.get("name")
                 if not target:
                     continue
                 to_id = self.resolve_source("official" if rel.get("slug") else rec.source, target)
-                if to_id is None or to_id == from_id:
+                if to_id is None:
+                    stats["unknown"].append((rec.source, rec.source_id, target))
+                    continue
+                if to_id == from_id:
                     continue
                 self.conn.execute(
                     """INSERT OR IGNORE INTO digimon_relation
@@ -185,5 +206,5 @@ class EvolutionResolver:
                        VALUES(?,?,?,?,?)""",
                     [from_id, to_id, "related", "official", None],
                 )
-                added += 1
-        return added
+                stats["relations"] += 1
+        return stats

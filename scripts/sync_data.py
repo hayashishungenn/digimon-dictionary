@@ -225,11 +225,43 @@ def _build_db(conn: sqlite3.Connection, records_by_source: dict[str, list],
     resolver = EvolutionResolver(conn)
     edge_count = 0
     rel_count = 0
-    for _slug, entity in matcher.entities.items():
-        edge_count += resolver.add_edges_for_entity(entity)
-        rel_count += resolver.add_relations_for_entity(entity)
+    unknown_edges = 0
+    self_edges = 0
+    unknown_rels = 0
+    for slug, entity in matcher.entities.items():
+        edge_stats = resolver.add_edges_for_entity(entity)
+        edge_count += edge_stats["edges"]
+        if edge_stats["unknown"]:
+            unknown_edges += len(edge_stats["unknown"])
+            store.queue_review(
+                "edge", None, f"unresolved evolution target(s) for {slug}",
+                {"canonical_slug": slug,
+                 "unresolved": [{"source": s, "source_id": sid, "ref": r}
+                                for s, sid, r in edge_stats["unknown"]]},
+            )
+        if edge_stats["self"]:
+            self_edges += len(edge_stats["self"])
+            store.queue_review(
+                "edge", None, f"self-evolution reference(s) for {slug}",
+                {"canonical_slug": slug,
+                 "self": [{"source": s, "source_id": sid, "ref": r}
+                          for s, sid, r in edge_stats["self"]]},
+            )
+        rel_stats = resolver.add_relations_for_entity(entity)
+        rel_count += rel_stats["relations"]
+        if rel_stats["unknown"]:
+            unknown_rels += len(rel_stats["unknown"])
+            store.queue_review(
+                "relation", None, f"unresolved relation target(s) for {slug}",
+                {"canonical_slug": slug,
+                 "unresolved": [{"source": s, "source_id": sid, "ref": r}
+                                for s, sid, r in rel_stats["unknown"]]},
+            )
     conn.commit()
-    logger.info("evolution edges: %d, relations: %d", edge_count, rel_count)
+    logger.info(
+        "evolution edges: %d, relations: %d (unresolved: %d edge + %d relation targets, %d self-edges)",
+        edge_count, rel_count, unknown_edges, unknown_rels, self_edges,
+    )
 
     from pipeline.merge.relations import infer_relations
 
@@ -247,6 +279,14 @@ def _build_db(conn: sqlite3.Connection, records_by_source: dict[str, list],
 
     for item in matcher.review_queue:
         store.queue_review("digimon", None, item["reason"], item)
+    # entities created from ambiguous names are never silently confirmed
+    for slug, entity in matcher.entities.items():
+        if entity.needs_review:
+            store.queue_review(
+                "digimon", None, entity.review_reason or "needs review",
+                {"canonical_slug": slug,
+                 "record_sources": [r.source for r in entity.records if r]},
+            )
     store.commit()
 
     store.rebuild_fts()

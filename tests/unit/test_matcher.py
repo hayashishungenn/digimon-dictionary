@@ -129,3 +129,50 @@ def test_digimons_ja_not_used_for_matching():
     slugs = {s for r in m.entities["stingmon"].records for s in
              [n.value for n in r.names if n.language == "ja"]}
     assert "スティングモン" in slugs
+
+
+def test_zh_simplified_matches_traditional_name():
+    """§33 简繁: a record carrying only the traditional form 亞古獸 must merge
+    into the entity seeded with the simplified form 亚古兽."""
+    m = Matcher()
+    m.add(_official("agumon", "Agumon", "亚古兽"))
+    rec = SourceDigimon(
+        source="wikimon", source_id="Agumon",
+        names=[SourceName("亞古獸", "zh_cn", status="community", source="wikimon")],
+        extra={},
+    )
+    slug = m.add(rec)
+    assert slug == "agumon"
+    assert len(m.entities["agumon"].records) == 2
+
+
+def test_ambiguous_name_creates_reviewed_entity_not_silent_merge():
+    """Two entities share the same Chinese name 亚古兽 (Agumon base vs the 2006
+    form). A record carrying only that name is ambiguous — it must NOT merge to
+    either candidate, and its entity must be flagged for review."""
+    m = Matcher()
+    m.seed_entity("agumon", _official("agumon", "Agumon", "亚古兽"))
+    m.seed_entity("agumon-2006", _wikimon("Agumon (2006 Anime Version)", zh="亚古兽"))
+    assert len(m.entities) == 2
+
+    rec = SourceDigimon(
+        source="digimons_net", source_id="agumon-2006x",
+        names=[SourceName("亚古兽", "zh_cn", status="community", source="digimons_net")],
+        extra={},
+    )
+    slug = m.add(rec)
+    assert slug not in ("agumon", "agumon-2006")  # never merged to the first candidate
+    assert m.entities[slug].needs_review is True
+    assert m.entities[slug].review_reason
+    assert any(q["reason"] == "ambiguous_name" for q in m.review_queue)
+
+
+def test_slug_collision_is_deterministic_and_cjk_fallback_stable():
+    # non-latin-only names fall back to a stable hash slug, never 'unknown'
+    a = slug_for_names({"ja": "オメガモン"})
+    b = slug_for_names({"ja": "オメガモン"})
+    assert a == b and a.startswith("digimon-")
+    # X-Antibody / Black / 2006 suffixes map to stable tokens
+    assert slug_for_names({"en": "Agumon (X-Antibody)"}) == "agumon-x-antibody"
+    assert slug_for_names({"en": "Agumon (Black)"}) == "agumon-black"
+    assert slug_for_names({"en": "Agumon (2006 Anime Version)"}) == "agumon-2006"

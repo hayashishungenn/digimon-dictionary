@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 
 from pipeline.core.config import RAW_SOURCES
 from pipeline.core.models import SourceDigimon, SourceName
@@ -115,8 +114,11 @@ def import_game_stats(conn, digidb_records: list[SourceDigimon]) -> int:
 
     Matches each record to a canonical digimon by English name (exact → alias →
     punctuation-insensitive normalized). Matched-by-normalization names are
-    registered as game-translation aliases so they become searchable. Rows whose
-    name does not resolve are skipped (never fabricated). Returns rows written.
+    registered as game-translation aliases so they become searchable. Stats are
+    UPSERTed (a re-import updates existing values; it never uses INSERT OR
+    IGNORE which would keep stale numbers forever). Unmatched records are
+    surfaced in the manual review queue, never just logged. Returns rows
+    written.
     """
     if not digidb_records:
         return 0
@@ -161,6 +163,13 @@ def import_game_stats(conn, digidb_records: list[SourceDigimon]) -> int:
                 digimon_id = slug_ids.get(target_slug)
         if digimon_id is None:
             skipped += 1
+            conn.execute(
+                """INSERT OR IGNORE INTO manual_review_queue(entity_type, entity_id, reason, detail)
+                   VALUES('game_digimon_stats', NULL, ?, ?)""",
+                [f"digidb record '{en}' could not be matched to a canonical digimon",
+                 json.dumps({"source": "digidb", "source_id": rec.source_id, "name": en},
+                             ensure_ascii=False)],
+            )
             continue
 
         # register the game's spelling as a searchable game-translation alias
@@ -179,9 +188,13 @@ def import_game_stats(conn, digidb_records: list[SourceDigimon]) -> int:
 
         stats = rec.extra.get("game_stats", {})
         conn.execute(
-            """INSERT OR IGNORE INTO game_digimon_stats
+            """INSERT INTO game_digimon_stats
                (game_id, digimon_id, hp, sp, atk, def, int, spd, memory, slots, extras, source)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(game_id, digimon_id) DO UPDATE SET
+                 hp=excluded.hp, sp=excluded.sp, atk=excluded.atk, def=excluded.def,
+                 int=excluded.int, spd=excluded.spd, memory=excluded.memory,
+                 slots=excluded.slots, extras=excluded.extras, source=excluded.source""",
             [
                 game_id, digimon_id,
                 stats.get("hp"), stats.get("sp"), stats.get("atk"), stats.get("def"),
@@ -192,5 +205,5 @@ def import_game_stats(conn, digidb_records: list[SourceDigimon]) -> int:
         )
         written += 1
     conn.commit()
-    logger.info("digidb game stats: %d written, %d skipped (no match)", written, skipped)
+    logger.info("digidb game stats: %d written, %d unmatched (queued for review)", written, skipped)
     return written

@@ -1,8 +1,6 @@
 """Unit tests for game-stats import (digidb → game_digimon_stats)."""
 from __future__ import annotations
 
-import sqlite3
-
 from pipeline.core.models import SourceDigimon, SourceName
 from pipeline.core.schema import connect, create_schema
 from pipeline.matching.matcher import Matcher
@@ -65,3 +63,42 @@ def test_import_game_stats_no_records(tmp_path):
     conn = connect(tmp_path / "g2.sqlite")
     create_schema(conn)
     assert import_game_stats(conn, []) == 0
+
+
+def test_import_game_stats_updates_existing(tmp_path):
+    """Re-importing the same (game, digimon) must UPDATE the stats, not keep
+    the stale first value (no INSERT OR IGNORE)."""
+    conn = connect(tmp_path / "u.sqlite")
+    create_schema(conn)
+    m = Matcher()
+    for rec in (_dapi("Agumon", 1),):
+        m.add(rec)
+    store = CanonicalStore(conn)
+    for e in m.entities.values():
+        store.upsert_entity(e)
+    store.commit()
+
+    import_game_stats(conn, [_digidb("1", "Agumon", 590)])
+    import_game_stats(conn, [_digidb("1", "Agumon", 999)])
+    agumon_id = conn.execute("SELECT id FROM digimon WHERE canonical_slug='agumon'").fetchone()["id"]
+    stats = conn.execute("SELECT hp, sp FROM game_digimon_stats WHERE digimon_id=?", [agumon_id]).fetchone()
+    assert stats["hp"] == 999  # updated, not stale
+    assert conn.execute("SELECT COUNT(*) FROM game_digimon_stats").fetchone()[0] == 1
+
+
+def test_import_game_stats_unmatched_queued_for_review(tmp_path):
+    """An unmatched digidb record must land in the review queue, not vanish."""
+    conn = connect(tmp_path / "q.sqlite")
+    create_schema(conn)
+    m = Matcher()
+    for rec in (_dapi("Agumon", 1),):
+        m.add(rec)
+    store = CanonicalStore(conn)
+    for e in m.entities.values():
+        store.upsert_entity(e)
+    store.commit()
+
+    import_game_stats(conn, [_digidb("999", "TotallyUnknownmon", 500)])
+    reviews = conn.execute("SELECT reason, detail FROM manual_review_queue").fetchall()
+    assert reviews and "TotallyUnknownmon" in reviews[0]["reason"]
+    assert "TotallyUnknownmon" in reviews[0]["detail"]

@@ -50,7 +50,14 @@ PREFIX_RULES: list[tuple[str, str]] = [
 
 def infer_relations(conn: sqlite3.Connection) -> int:
     """Add variant relations for every digimon whose slug derives from an
-    existing base. Returns relations added."""
+    existing base. Returns relations added.
+
+    Inferred relations are stored with ``source='inferred'`` and an explicit
+    ``note`` describing the slug rule that produced them — they are never
+    presented as official facts. A slug that implies a base which does not
+    exist is surfaced in the manual review queue instead of being dropped.
+    """
+    import json
     import re
 
     by_slug: dict[str, int] = {}
@@ -61,6 +68,7 @@ def infer_relations(conn: sqlite3.Connection) -> int:
         by_norm.setdefault(norm, r["id"])
 
     added = 0
+    missing_base = 0
     for slug, did in by_slug.items():
         base = _base_slug(slug)
         if base is None:
@@ -70,21 +78,47 @@ def infer_relations(conn: sqlite3.Connection) -> int:
             # tolerate hyphen/case drift (e.g. base "war-greymon" vs entity
             # slug "wargreymon" from a source that omitted the space)
             base_id = by_norm.get(re.sub(r"[^a-z0-9]", "", base))
-        if base_id is None or base_id == did:
+        if base_id is None:
+            missing_base += 1
+            conn.execute(
+                """INSERT OR IGNORE INTO manual_review_queue(entity_type, entity_id, reason, detail)
+                   VALUES('digimon',?,?,?)""",
+                [did, f"variant slug '{slug}' implies base '{base}' which does not exist",
+                 json.dumps({"canonical_slug": slug, "implied_base": base}, ensure_ascii=False)],
+            )
+            continue
+        if base_id == did:
             continue
         rel_type = _relation_type(slug)
         if rel_type is None:
             continue
+        rule = _matching_rule(slug)
         conn.execute(
             """INSERT OR IGNORE INTO digimon_relation
                (from_digimon_id, to_digimon_id, relation_type, source, note)
                VALUES(?,?,?,?,?)""",
-            [did, base_id, rel_type, "inferred", f"variant of {base}"],
+            [did, base_id, rel_type, "inferred",
+             f"inferred from slug rule '{rule}' (base '{base}')"],
         )
         added += 1
     conn.commit()
-    logger.info("inferred %d related-form relations", added)
+    if missing_base:
+        logger.info("inferred relations: %d added, %d variant slugs have a missing base (reviewed)",
+                    added, missing_base)
+    else:
+        logger.info("inferred %d related-form relations", added)
     return added
+
+
+def _matching_rule(slug: str) -> str | None:
+    """The prefix/suffix rule that classifies `slug` (for provenance notes)."""
+    for prefix, _rt in PREFIX_RULES:
+        if slug.startswith(prefix):
+            return f"{prefix}*"
+    for suffix, _rt in SUFFIX_RULES:
+        if slug.endswith(suffix):
+            return f"*{suffix}"
+    return None
 
 
 def _base_slug(slug: str) -> str | None:

@@ -71,8 +71,16 @@ class Matcher:
         self.review_queue: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------ index
-    def _add_name(self, slug: str, name: str) -> None:
-        key = naming.normalize_key(name)
+    @staticmethod
+    def _key_for(name: str, language: str | None = None) -> str:
+        """Normalized matching key. Chinese names are also indexed by their
+        simplified form so 亞古獸 / 亚古兽 match the same entity (§33 简繁)."""
+        if language in ("zh_cn", "zh_hk", "zh_tw"):
+            return naming.normalize_key_zh(name)
+        return naming.normalize_key(name)
+
+    def _add_name(self, slug: str, name: str, language: str | None = None) -> None:
+        key = self._key_for(name, language)
         if not key:
             return
         self._index.setdefault(key, [])
@@ -85,7 +93,7 @@ class Matcher:
         self.entities[slug] = entity
         for n in record.names:
             if n.matchable:
-                self._add_name(slug, n.value)
+                self._add_name(slug, n.value, n.language)
         self._add_name(slug, record.extra.get("alt_name") or "")
         self._external[(record.source, record.source_id)] = slug
 
@@ -96,23 +104,22 @@ class Matcher:
     def _resolve_by_external(self, record: SourceDigimon) -> str | None:
         return self._external.get((record.source, record.source_id))
 
-    def resolve(self, record: SourceDigimon) -> str | None:
-        """Return the canonical slug a record maps to, or None (new entity).
+    def resolve(self, record: SourceDigimon) -> tuple[str | None, bool]:
+        """Return ``(canonical_slug, ambiguous)`` for a record.
 
         Resolution is exact-only (product spec §33: no pure-fuzzy auto-merge):
           external id -> exact ja -> exact en -> exact romanized -> exact zh
-        Ambiguous exact hits are flagged for manual review and resolve to a NEW
-        entity (never a guess).
+        ``ambiguous=True`` means the exact name hit several entities — the
+        caller must NOT silently merge or fabricate a confirmed entity.
         """
         # 1. external-id mapping (covers records already seen from a source)
         ext = self._resolve_by_external(record)
         if ext:
-            return ext
+            return ext, False
 
         names = record.names
-        keys = [naming.normalize_key(n.value) for n in names if n.value and n.matchable]
-        if not keys:
-            return None
+        if not any(n.value and n.matchable for n in names):
+            return None, False
 
         # 2. exact matches by priority order: ja, en, romanized, zh_cn, dub
         candidates: list[str] = []
@@ -120,7 +127,7 @@ class Matcher:
             for n in names:
                 if n.language != priority or not n.matchable:
                     continue
-                hits = self._lookup(naming.normalize_key(n.value))
+                hits = self._lookup(self._key_for(n.value, n.language))
                 if hits:
                     candidates = hits
                     break
@@ -128,7 +135,7 @@ class Matcher:
                 break
 
         if len(candidates) == 1:
-            return candidates[0]
+            return candidates[0], False
         if len(candidates) > 1:
             # ambiguous exact name: never auto-merge, flag for review
             self.review_queue.append(
@@ -141,13 +148,13 @@ class Matcher:
                 }
             )
             logger.warning("ambiguous name %s -> %s (review queued)", [n.value for n in names], candidates)
-            return None
-        return None
+            return None, True
+        return None, False
 
     # -------------------------------------------------------------- assembly
     def add(self, record: SourceDigimon) -> str:
         """Add a record, returning its canonical slug."""
-        slug = self.resolve(record)
+        slug, ambiguous = self.resolve(record)
         if slug is None:
             slug = slug_for_names({n.language: n.value for n in record.names})
             # ensure uniqueness
@@ -157,12 +164,16 @@ class Matcher:
                 slug = f"{base}-{i}"
                 i += 1
             entity = MatchedEntity(canonical_slug=slug, records=[], confidence="high")
+            if ambiguous:
+                # never let an ambiguous record masquerade as a confirmed entity
+                entity.needs_review = True
+                entity.review_reason = "ambiguous exact name (see manual_review_queue)"
             self.entities[slug] = entity
             logger.info("new entity: %s (source %s %s)", slug, record.source, record.source_id)
         self.entities[slug].records.append(record)
         for n in record.names:
             if n.matchable:
-                self._add_name(slug, n.value)
+                self._add_name(slug, n.value, n.language)
         self._external[(record.source, record.source_id)] = slug
         # register official→dapi cross-source id linking via names handled above
         return slug
