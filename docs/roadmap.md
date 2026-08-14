@@ -23,12 +23,12 @@
 - [x] CODE REVIEW / FIX / RETEST
 - [x] 交付报告
 
-## 阶段二（后续增强）
+## 阶段二（进行中）
 
-- [ ] Wikimon 全量接入（日文名/中文名/组织/词源/主线进化的完整覆盖）
-- [ ] 游戏数值导入（Cyber Sleuth / Next Order / Time Stranger → game_digimon_stats）
-- [ ] 图片本地下载 + 缩略图生成 + 图库页
-- [ ] 进化图交互增强（拖动/缩放/按作品过滤）
+- [x] 游戏数值导入（Cyber Sleuth → game_digimon_stats，327/341，独立于世界观）
+- [x] 冲突审查报告（scripts/review_conflicts.py → docs/data-conflicts.md）
+- [ ] 图片本地下载 + 缩略图生成（download_images.py 已就绪）
+- [ ] 进化图交互增强（拖动/缩放）
 - [ ] 深度相关形态推理（mode_change / black_variant 自动标记）
-- [ ] 增量同步状态（content_hash 跳过未变源）
+- [ ] 增量同步（content_hash 跳过未变源）
 - [ ] 公开部署（数据库已避免内置第三方版权图片）

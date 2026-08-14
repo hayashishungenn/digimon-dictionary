@@ -18,10 +18,76 @@
 	let width = $derived(layout.maxW + PAD * 2);
 	let height = $derived(layout.maxH + PAD * 2);
 	let positions = $derived(layout.positions);
+
+	// ----- pan / zoom -----
+	let scale = $state(1);
+	let panX = $state(0);
+	let panY = $state(0);
+	let dragging = $state(false);
+	let lastX = 0;
+	let lastY = 0;
+
+	function onWheel(e: WheelEvent) {
+		e.preventDefault();
+		const el = e.currentTarget as HTMLElement;
+		const rect = el.getBoundingClientRect();
+		const mx = e.clientX - rect.left;
+		const my = e.clientY - rect.top;
+		const factor = e.deltaY < 0 ? 1.12 : 0.89;
+		const ns = Math.min(3, Math.max(0.25, scale * factor));
+		// keep the point under the cursor stationary
+		panX = mx - (mx - panX) * (ns / scale);
+		panY = my - (my - panY) * (ns / scale);
+		scale = ns;
+	}
+
+	function onPointerDown(e: PointerEvent) {
+		dragging = true;
+		lastX = e.clientX;
+		lastY = e.clientY;
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+	}
+
+	function onPointerMove(e: PointerEvent) {
+		if (!dragging) return;
+		panX += e.clientX - lastX;
+		panY += e.clientY - lastY;
+		lastX = e.clientX;
+		lastY = e.clientY;
+	}
+
+	function onPointerUp() {
+		dragging = false;
+	}
+
+	function zoomBy(factor: number) {
+		scale = Math.min(3, Math.max(0.25, scale * factor));
+	}
+
+	function resetView() {
+		scale = 1;
+		panX = 0;
+		panY = 0;
+	}
 </script>
 
-<div class="evo-graph" role="img" aria-label="进化图谱">
-	<svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+<div
+	class="evo-graph"
+	class:dragging
+	onwheel={onWheel}
+	onpointerdown={onPointerDown}
+	onpointermove={onPointerMove}
+	onpointerup={onPointerUp}
+	onpointerleave={onPointerUp}
+	role="img"
+	aria-label="进化图谱（滚轮缩放，拖拽平移）"
+>
+	<svg
+		width={width}
+		height={height}
+		viewBox={`0 0 ${width} ${height}`}
+		style="transform: translate({panX}px, {panY}px) scale({scale}); transform-origin: 0 0;"
+	>
 		{#each graph.edges as e}
 			{@const a = positions[String(e.from)]}
 			{@const b = positions[String(e.to)]}
@@ -59,12 +125,53 @@
 			</g>
 		{/each}
 	</svg>
+
+	<div class="zoom-controls" aria-label="图谱缩放">
+		<button class="btn zoom-btn" onclick={() => zoomBy(1.2)} aria-label="放大">＋</button>
+		<button class="btn zoom-btn" onclick={() => zoomBy(0.83)} aria-label="缩小">−</button>
+		<button class="btn zoom-btn" onclick={resetView} aria-label="重置视图">⟲</button>
+	</div>
+	<span class="zoom-hint mono faint">滚轮缩放 · 拖拽平移 · 点击节点进入详情</span>
 </div>
 
 <style>
 	.evo-graph {
-		overflow-x: auto;
-		padding-bottom: 8px;
+		position: relative;
+		overflow: hidden;
+		cursor: grab;
+		touch-action: none;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background:
+			radial-gradient(circle at 20% 10%, rgba(53, 208, 255, 0.05), transparent 40%),
+			radial-gradient(circle at 90% 90%, rgba(124, 92, 255, 0.05), transparent 40%);
+		user-select: none;
+	}
+	.evo-graph.dragging {
+		cursor: grabbing;
+	}
+	.zoom-controls {
+		position: absolute;
+		top: 10px;
+		right: 10px;
+		display: flex;
+		gap: 6px;
+	}
+	.zoom-btn {
+		width: 30px;
+		height: 30px;
+		padding: 0;
+		justify-content: center;
+		font-size: 15px;
+		background: rgba(15, 21, 38, 0.85);
+		backdrop-filter: blur(4px);
+	}
+	.zoom-hint {
+		position: absolute;
+		bottom: 8px;
+		left: 12px;
+		font-size: 11px;
+		pointer-events: none;
 	}
 	:global(.node-bg) {
 		fill: #16203a;
@@ -128,7 +235,6 @@
 			if (id === centerId) continue;
 			layers.set(layer, [...(layers.get(layer) ?? []), id]);
 		}
-		// order each layer by id for stability
 		for (const [k, v] of layers) layers.set(k, v.sort((a, b) => a - b));
 
 		const positions: Record<string, { x: number; y: number; cx: number; cy: number }> = {};

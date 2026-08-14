@@ -22,8 +22,9 @@
 | 别名数 | 2,794 |
 | 所属组织 | 50 个（成员 348 条） |
 | X抗体数码兽 | 220 |
+| 游戏数值（Cyber Sleuth） | 327 / 341 只（`game_digimon_stats`，独立于世界观） |
 | 仍需人工确认（manual_review_queue） | 4 |
-| 数据冲突（data_conflict，已记录未静默） | 447 |
+| 数据冲突（data_conflict，已记录未静默） | 447（审查报告见 `docs/data-conflicts.md`） |
 
 ## 数据来源
 
@@ -89,8 +90,8 @@ uv run python scripts/download_images.py
 
 ## 已知限制（诚实声明）
 
-- 81.2% 三语言完整率：约 325 只扩展/冷门数码兽缺简体中文名（无可信中文来源），缺英文简介
+- 81.2% 三语言完整率：约 325 只扩展/冷门数码兽缺简体中文名（无可信中文来源，不编造）
 - "战暴"等非官方昵称/缩写不在数据中（不编造来源外的别名）
-- 游戏数值（Cyber Sleuth 等）尚未导入（世界观数据已隔离，`game_digimon_stats` 表已就绪）
+- 游戏数值仅 Cyber Sleuth 一作（327/341）；其他作品可依 `game_digimon_stats` 表继续导入
 - Wikimon 的 4 条待人工确认（ambiguous names）
-- 447 条跨源数据冲突已记录未静默（dapi vs official 的 level/attribute 分歧）
+- 447 条跨源数据冲突已记录未静默（见 `docs/data-conflicts.md` 供人工裁决）
