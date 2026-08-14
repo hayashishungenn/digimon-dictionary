@@ -6,10 +6,10 @@ always preserved alongside (e.g. ``level_raw``) — mapping is never destructive
 """
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class Level(str, Enum):
+class Level(StrEnum):
     """Canonical level stages (Japanese-origin terminology, per product spec)."""
 
     DIGI_EGG = "digi_egg"  # 数码蛋 / Digitama
@@ -134,7 +134,7 @@ LEVEL_MAP: dict[str, Level] = {
 }
 
 
-class Attribute(str, Enum):
+class Attribute(StrEnum):
     VACCINE = "vaccine"
     VIRUS = "virus"
     DATA = "data"
@@ -228,7 +228,7 @@ def parse_attribute(value: str | None) -> Attribute:
     return ATTRIBUTE_MAP.get(value.strip().lower(), Attribute.UNKNOWN)
 
 
-class EvolutionType(str, Enum):
+class EvolutionType(StrEnum):
     NORMAL = "normal"
     JOGRESS = "jogress"
     DNA = "dna"
@@ -245,7 +245,7 @@ class EvolutionType(str, Enum):
     UNKNOWN = "unknown"
 
 
-class RelationType(str, Enum):
+class RelationType(StrEnum):
     VARIANT = "variant"
     X_ANTIBODY = "x_antibody"
     MODE_CHANGE = "mode_change"
@@ -256,7 +256,7 @@ class RelationType(str, Enum):
     RELATED = "related"
 
 
-class SkillType(str, Enum):
+class SkillType(StrEnum):
     SPECIAL_MOVE = "special_move"
     SIGNATURE_MOVE = "signature_move"
     ATTACK = "attack"
@@ -264,7 +264,7 @@ class SkillType(str, Enum):
     OTHER = "other"
 
 
-class AliasType(str, Enum):
+class AliasType(StrEnum):
     OFFICIAL = "official"
     DUB = "dub"
     ROMANIZATION = "romanization"
@@ -275,7 +275,7 @@ class AliasType(str, Enum):
     ALTERNATIVE_SPELLING = "alternative_spelling"
 
 
-class ImageType(str, Enum):
+class ImageType(StrEnum):
     MAIN_IMAGE = "main_image"
     THUMBNAIL = "thumbnail"
     OFFICIAL_ART = "official_art"
@@ -286,7 +286,7 @@ class ImageType(str, Enum):
     GAME_MODEL = "game_model"
 
 
-class AppearanceMedium(str, Enum):
+class AppearanceMedium(StrEnum):
     VPET = "vpet"
     GAME = "game"
     ANIME = "anime"
@@ -297,7 +297,7 @@ class AppearanceMedium(str, Enum):
     OTHER = "other"
 
 
-class NameStatus(str, Enum):
+class NameStatus(StrEnum):
     OFFICIAL = "official"
     OFFICIAL_GAME = "official_game"
     OFFICIAL_ANIME = "official_anime"
@@ -306,7 +306,7 @@ class NameStatus(str, Enum):
     UNVERIFIED = "unverified"
 
 
-class DataSource(str, Enum):
+class DataSource(StrEnum):
     """Canonical source identifiers used across provenance records."""
 
     DAPI = "dapi"  # digi-api.com

@@ -26,13 +26,8 @@ import logging
 import os
 import shutil
 import sqlite3
-import sys
 from datetime import UTC, datetime
 from pathlib import Path
-
-# Ensure the repo root is importable regardless of cwd.
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from pipeline.core.config import DB_PATH, REPORTS_DIR
 from pipeline.core.lock import SyncLockError, sync_lock

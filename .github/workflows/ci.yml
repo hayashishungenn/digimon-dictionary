@@ -1,0 +1,74 @@
+# CI quality gates (T7).
+#
+# - Python: locked install, ruff, pytest. Tests are hermetic — they use fixture
+#   DBs and injected source loaders, never a real full data sync.
+# - Web: install, type-check, unit tests, production build, then hermetic
+#   Playwright E2E against the deterministic fixture DB built by
+#   apps/web/tests/fixtures/build_e2e_fixture.py (no network sources).
+#
+# No job runs `scripts/sync_data.py` against live sources, so CI never depends
+# on an external source or a pre-synced data/digidex.sqlite.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    name: Python (ruff + pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check .
+      - name: Test
+        run: uv run pytest -q
+
+  web:
+    name: Web (check + test + build + hermetic E2E)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install Python dependencies (needed by the E2E API server)
+        run: uv sync --locked
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: npm ci
+      - name: Type-check
+        working-directory: apps/web
+        run: npm run check
+      - name: Unit tests
+        working-directory: apps/web
+        run: npm run test
+      - name: Production build
+        working-directory: apps/web
+        run: npm run build
+      - name: Install Playwright browsers
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+      - name: E2E (hermetic fixture DB)
+        working-directory: apps/web
+        run: npm run test:e2e

@@ -52,7 +52,6 @@ def extract_template(text: str, name: str) -> tuple[list[tuple[str, str]], int] 
     depth = 0
     i = start
     while i < len(text):
-        c = text[i]
         if text.startswith("{{", i):
             depth += 1
             i += 2

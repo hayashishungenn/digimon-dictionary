@@ -18,7 +18,12 @@ from typing import Any
 
 import httpx
 
-from .config import DEFAULT_MAX_RETRIES, DEFAULT_RATE_PER_SECOND, DEFAULT_TIMEOUT, DEFAULT_USER_AGENT
+from .config import (
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_RATE_PER_SECOND,
+    DEFAULT_TIMEOUT,
+    DEFAULT_USER_AGENT,
+)
 
 logger = logging.getLogger(__name__)
 

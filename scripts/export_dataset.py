@@ -9,11 +9,7 @@ import argparse
 import csv
 import json
 import sqlite3
-import sys
 from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from pipeline.core.config import DB_PATH, EXPORTS_DIR
 from pipeline.core.schema import connect
@@ -25,7 +21,7 @@ def _read_all(conn: sqlite3.Connection, table: str) -> list[dict]:
     except sqlite3.Error:
         return []
     rows = conn.execute(f"SELECT * FROM {table}").fetchall()
-    return [dict(zip(cols, r)) for r in rows]
+    return [dict(zip(cols, r, strict=False)) for r in rows]
 
 
 def export_dataset(out_dir: Path, formats: list[str]) -> dict:
@@ -38,7 +34,7 @@ def export_dataset(out_dir: Path, formats: list[str]) -> dict:
         rows = conn.execute("SELECT * FROM digimon ORDER BY id").fetchall()
         cols = [r[1] for r in conn.execute("PRAGMA table_info(digimon)")]
         for row in rows:
-            d = dict(zip(cols, row))
+            d = dict(zip(cols, row, strict=False))
             d["aliases"] = [r[0] for r in conn.execute(
                 "SELECT alias FROM digimon_alias WHERE digimon_id=?", [d["id"]])]
             d["skills"] = [r[0] for r in conn.execute(

@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 from pipeline.sources.official import parse_list_rows
-from pipeline.sources.wikitext import extract_template, parse_ol_field
 from pipeline.sources.wikimon import WikimonAdapter
+from pipeline.sources.wikitext import extract_template, parse_ol_field
 
 S2_FIXTURE = """{{FArticle|162}}{{S2
 |drbentry={{DRBEntry|772|773|2a=Zubamon}}

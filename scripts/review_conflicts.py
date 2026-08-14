@@ -11,17 +11,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from pipeline.core.config import DB_PATH
 from pipeline.core.schema import connect
 
 
 def main(argv: list[str] | None = None) -> int:
+    ROOT = Path(__file__).resolve().parents[1]
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=ROOT / "docs" / "data-conflicts.md")
     args = ap.parse_args(argv)

@@ -3,9 +3,9 @@ armor/hybrid levels, jogress, same-name disambiguation, multi-attribute,
 multi-type source conflicts."""
 from __future__ import annotations
 
+from pipeline.core.enums import Level, parse_level
 from pipeline.core.models import MatchedEntity, SourceDigimon, SourceName, SourceSkill
 from pipeline.core.schema import connect, create_schema
-from pipeline.core.enums import Level, parse_level
 from pipeline.matching.matcher import Matcher, slug_for_names
 from pipeline.merge.relations import infer_relations
 from pipeline.merge.resolver import EvolutionResolver, _guess_evolution_type
@@ -121,7 +121,6 @@ def test_slug_for_ambiguous_variants():
 
 def test_multi_attribute_uses_first_non_unknown(tmp_path):
     """digi-api 把 Unknown 排在前面时，应取后一个真实属性（§64 多属性）."""
-    from pipeline.core.models import SourceSkill as SK
 
     rec = SourceDigimon(
         source="dapi", source_id="1",

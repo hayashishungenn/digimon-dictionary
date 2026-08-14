@@ -17,9 +17,9 @@
 
 | 层 | 技术 |
 |---|---|
-| 数据管线 | Python 3.14 · httpx · SQLite |
+| 数据管线 | Python ≥3.12（开发/CI 用 3.14）· httpx · SQLite |
 | API | Python · FastAPI |
-| Web 前端 | TypeScript · SvelteKit |
+| Web 前端 | TypeScript · SvelteKit（Node ≥22） |
 | 测试 | pytest · Playwright · Vitest |
 | 数据库 | SQLite (FTS5 全文搜索) |
 

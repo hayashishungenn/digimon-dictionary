@@ -20,9 +20,9 @@ DigiDex — a canonical, multilingual (简体中文 / EN / 日本語) Digimon en
 
 ## Tech stack
 
-- Data pipeline: Python 3.14, httpx, SQLite. Package manager: `uv`.
+- Data pipeline: Python ≥3.12 (dev/CI use 3.14), httpx, SQLite. Package manager: `uv`.
 - API: FastAPI + uvicorn.
-- Web: SvelteKit + TypeScript, Node 24.
+- Web: SvelteKit + TypeScript, Node ≥22 (dev uses 24).
 - Tests: pytest (pipeline + API), Vitest (frontend unit), Playwright (E2E).
 
 ## Commands
