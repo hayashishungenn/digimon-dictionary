@@ -22,7 +22,6 @@ from pipeline.sources.wikitext import (
     extract_wiki_section,
     parse_ol_field,
     strip_markup,
-    strip_markup_keep_templates,
 )
 
 logger = logging.getLogger(__name__)
@@ -84,7 +83,14 @@ class WikimonAdapter(SourceAdapter):
 
     # ------------------------------------------------------------- wikitext
     def _fetch_wikitexts(self, fetcher: Any, titles: list[str]) -> dict[str, str]:
+        """Fetch page wikitext in batches; raise if ANY batch fails.
+
+        A single missing batch would silently drop ~40 digimon from the
+        canonical DB, so batch failures are treated as hard failures (T1.4)
+        rather than being logged and skipped.
+        """
         out: dict[str, str] = {}
+        failures: list[str] = []
         for i in range(0, len(titles), self.batch_size):
             batch = titles[i : i + self.batch_size]
             params = {
@@ -98,7 +104,7 @@ class WikimonAdapter(SourceAdapter):
             try:
                 payload = fetcher.get_json(WIKIMON_API, params=params)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("wikitext fetch failed for batch %d: %s", i, exc)
+                failures.append(f"batch {i // self.batch_size} ({len(batch)} titles): {exc}")
                 continue
             for page in payload.get("query", {}).get("pages", {}).values():
                 if "revisions" not in page:
@@ -110,6 +116,10 @@ class WikimonAdapter(SourceAdapter):
                     continue
             if i and i % 400 == 0:
                 logger.info("wikimon wikitext: %d/%d titles", i, len(titles))
+        if failures:
+            raise RuntimeError(
+                f"wikimon: {len(failures)} wikitext batch(es) failed: {failures[:5]}"
+            )
         return out
 
     # ---------------------------------------------------------------- parse
@@ -125,7 +135,6 @@ class WikimonAdapter(SourceAdapter):
         kan = (pd.get("kan") or "").strip()
         if kan:
             names.append(SourceName(kan, "ja", status="official", source="wikimon"))
-        name_en = title
         if not title.startswith("Digimon"):
             names.append(SourceName(title, "en", status="community", source="wikimon"))
         dub = (pd.get("dub") or "").strip()

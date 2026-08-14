@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from bs4 import BeautifulSoup
@@ -193,14 +193,22 @@ class OfficialAdapter(SourceAdapter):
         # 2. details (EN) for type/attribute/skill/profile
         details: dict[str, dict[str, Any]] = {}
         if self.fetch_details:
+            detail_failures: list[str] = []
             for i, slug in enumerate(slugs):
                 try:
                     details[slug] = self._fetch_detail(of, slug)
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("official detail failed for %s: %s", slug, exc)
-                    details[slug] = {"slug": slug}
+                    detail_failures.append(f"{slug}: {exc}")
                 if i and i % 100 == 0:
                     logger.info("official: fetched %d/%d details", i, len(slugs))
+            if detail_failures:
+                # A partial detail sweep would silently drop type/attribute/
+                # profile data for those digimon — abort rather than publish an
+                # incomplete candidate (T1.4).
+                raise RuntimeError(
+                    f"official: {len(detail_failures)} detail pages failed: "
+                    f"{detail_failures[:5]}"
+                )
             save_raw(
                 "official", "details_en", details,
                 meta={"source_url": f"{REFERENCE_URL}/reference_en/detail.php", "count": len(details)},

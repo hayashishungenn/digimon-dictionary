@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,8 @@ class SyncState:
             if self.path.exists():
                 self._data = json.loads(self.path.read_text("utf-8"))
         except (OSError, ValueError):
+            # A half-written state file (e.g. process killed mid-write) must not
+            # crash the sync — fall back to empty state rather than raising.
             self._data = {}
 
     def get(self, source: str) -> dict[str, Any]:
@@ -33,6 +36,19 @@ class SyncState:
         """True when this source has already been ingested with this hash."""
         return self._data.get(source, {}).get("content_hash") == content_hash
 
+    def previous_records(self, source: str) -> int:
+        """How many records the last *successful* sync reported for a source."""
+        return int(self._data.get(source, {}).get("records", 0) or 0)
+
     def save(self) -> None:
+        """Persist state atomically: write a temp file, then replace.
+
+        A process killed mid-write leaves only a `.tmp` file (ignored on load),
+        never a half-written state file that the next run would misread.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self._data, indent=2, ensure_ascii=False), "utf-8")
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text(
+            json.dumps(self._data, indent=2, ensure_ascii=False), "utf-8"
+        )
+        os.replace(tmp, self.path)

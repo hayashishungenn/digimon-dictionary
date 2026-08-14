@@ -99,8 +99,6 @@ def validate(conn: sqlite3.Connection) -> dict[str, Any]:
         issue("warning", "duplicate_evolution_edge", f"edge {r[0]}->{r[1]} ({r[2]}) appears {r[3]}x")
 
     # --- near-duplicate entities (same ja + same zh, different en) ----------
-    import re as _re
-
     dup_groups = conn.execute(
         """SELECT name_ja, name_zh_cn, COUNT(*) c
            FROM digimon
@@ -123,7 +121,7 @@ def validate(conn: sqlite3.Connection) -> dict[str, Any]:
             )
 
     # --- orphan references ---------------------------------------------------
-    for tbl, fk in (("digimon_skill", "skill_id"), ("digimon_alias", "digimon_id")):
+    for tbl, _fk in (("digimon_skill", "skill_id"), ("digimon_alias", "digimon_id")):
         orphans = conn.execute(
             f"""SELECT COUNT(*) FROM {tbl} o LEFT JOIN digimon d ON d.id = o.digimon_id
                 WHERE o.digimon_id IS NOT NULL AND d.id IS NULL"""
@@ -162,9 +160,6 @@ def validate(conn: sqlite3.Connection) -> dict[str, Any]:
     def coverage(column: str) -> dict[str, int]:
         total = conn.execute("SELECT COUNT(*) FROM digimon").fetchone()[0]
         have = conn.execute(
-            f"SELECT COUNT(*) FROM digimon WHERE {column} IS NOT NULL AND TRIM({column}) != ''"
-        ).fetchone()[0]
-        verified = conn.execute(
             f"SELECT COUNT(*) FROM digimon WHERE {column} IS NOT NULL AND TRIM({column}) != ''"
         ).fetchone()[0]
         return {"total": total, "present": have, "pct": round(have / total * 100, 1) if total else 0}
@@ -292,7 +287,7 @@ def to_markdown(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def run_and_write(db_path: Path) -> dict[str, Any]:
+def run_and_write(db_path: Path, reports_dir: Path | None = None) -> dict[str, Any]:
     from datetime import datetime
 
     conn = connect(db_path)
@@ -301,9 +296,10 @@ def run_and_write(db_path: Path) -> dict[str, Any]:
     finally:
         conn.close()
     report["generated_at"] = datetime.now().isoformat(timespec="seconds")
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    (REPORTS_DIR / "data-quality.json").write_text(
+    out_dir = reports_dir or REPORTS_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "data-quality.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False), "utf-8"
     )
-    (REPORTS_DIR / "data-quality.md").write_text(to_markdown(report), "utf-8")
+    (out_dir / "data-quality.md").write_text(to_markdown(report), "utf-8")
     return report

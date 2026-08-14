@@ -378,3 +378,47 @@ def connect_readonly(db_path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA query_only = ON")
     return conn
+
+
+def checkpoint_and_close(conn: sqlite3.Connection) -> None:
+    """Fold any WAL content into the main DB file and close the connection.
+
+    Used before an atomic replace so the .sqlite file alone is complete and
+    self-contained (the WAL/SHM sidecar files become removable).
+    """
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.Error:
+        pass  # not a WAL database (or already checkpointed); the file is still valid
+    conn.close()
+
+
+def cleanup_db_files(path: str | Path) -> None:
+    """Remove a SQLite database and its WAL/SHM sidecars if they exist.
+
+    Used to dispose of candidate databases and to guarantee no temp files leak.
+    """
+    p = Path(path)
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        sidecar = Path(f"{p}{suffix}")
+        try:
+            if sidecar.exists():
+                sidecar.unlink()
+        except OSError:
+            pass
+
+
+def cleanup_sidecars(path: str | Path) -> None:
+    """Remove only the WAL/SHM/journal sidecars of a SQLite file.
+
+    Leaves the main `.sqlite` file in place (e.g. a kept partial candidate),
+    ensuring no sidecar temp files leak.
+    """
+    p = Path(path)
+    for suffix in ("-wal", "-shm", "-journal"):
+        sidecar = Path(f"{p}{suffix}")
+        try:
+            if sidecar.exists():
+                sidecar.unlink()
+        except OSError:
+            pass

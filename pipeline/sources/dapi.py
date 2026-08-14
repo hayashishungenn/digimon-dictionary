@@ -120,7 +120,13 @@ class DapiAdapter(SourceAdapter):
                        "failed": failed})
         detail_fetcher.close()
         if failed:
-            logger.warning("dapi: %d digimon could not be fetched: %s", len(failed), failed[:20])
+            # A partial detail sweep must never be treated as a successful sync
+            # (T1.4): missing records would silently drop entities from the
+            # canonical DB. Raise so the candidate is aborted, never published.
+            raise RuntimeError(
+                f"dapi: {len(failed)} digimon details could not be fetched after retries: "
+                f"{failed[:20]}"
+            )
         return records
 
     def _to_record(self, rec: dict[str, Any]) -> SourceDigimon:

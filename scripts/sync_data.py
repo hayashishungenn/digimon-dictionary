@@ -3,24 +3,50 @@
 FETCH -> RAW SNAPSHOT -> PARSE -> NORMALIZE -> ENTITY MATCHING -> MERGE
        -> VALIDATION -> REPORTS -> DATABASE
 
+Fail-safe design (T1):
+- Every run writes into a temporary *candidate* SQLite database
+  (`<db>.candidate.sqlite`); the live `data/digidex.sqlite` is never modified
+  in place.
+- The candidate is published to the live DB with a single atomic ``os.replace``
+  only after (a) every required source fetched successfully and completely,
+  (b) validation reports no errors, and (c) all SQLite connections are closed.
+- Any fetch / parse / match / merge / validation failure leaves the live
+  database byte-for-byte unchanged and exits non-zero.
+- ``--partial-ok`` (running a source subset) builds a partial candidate +
+  report but does NOT publish it unless ``--publish-partial`` is given.
+
 Usage:
     uv run python scripts/sync_data.py [--sources dapi,official,wikimon,digimons_net]
-                                       [--force] [--skip-validation]
+                                       [--force] [--skip-validation] [--partial-ok]
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json as _json
 import logging
+import os
+import shutil
+import sqlite3
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Ensure the repo root is importable regardless of cwd.
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from pipeline.core.config import DB_PATH
+from pipeline.core.config import DB_PATH, REPORTS_DIR
+from pipeline.core.lock import SyncLockError, sync_lock
 from pipeline.core.request import Fetcher
-from pipeline.core.schema import connect, create_schema
+from pipeline.core.schema import (
+    checkpoint_and_close,
+    cleanup_db_files,
+    cleanup_sidecars,
+    connect,
+    connect_readonly,
+    create_schema,
+)
 from pipeline.core.sync_state import SyncState
 from pipeline.matching.matcher import Matcher
 from pipeline.merge.resolver import EvolutionResolver
@@ -29,6 +55,11 @@ from pipeline.merge.store import CanonicalStore
 logger = logging.getLogger("sync_data")
 
 ALL_SOURCES = ["dapi", "official", "wikimon", "digimons_net", "digidb"]
+
+# Order matters for entity matching: dapi (backbone, en names) -> digimons_net
+# (adds ja/zh names) -> official (official en names often use dub forms, so
+# they resolve by ja once digimons_net has seeded it) -> wikimon -> digidb.
+INGEST_ORDER = ["dapi", "digimons_net", "official", "wikimon", "digidb"]
 
 
 def make_fetcher(cache_dir: Path | None = None) -> Fetcher:
@@ -63,6 +94,11 @@ def load_source(name: str):
     raise ValueError(f"unknown source: {name}")
 
 
+def _resolve_db_path() -> Path:
+    """The DB to build/publish. DIGIDEX_DB lets tests target a fixture path."""
+    return Path(os.environ.get("DIGIDEX_DB", str(DB_PATH)))
+
+
 def _load_fan_aliases(conn) -> None:
     """Register curated Chinese fan abbreviations (spec §7 / §35)."""
     import json
@@ -91,17 +127,233 @@ def _load_fan_aliases(conn) -> None:
     conn.commit()
 
 
-def main(argv: list[str] | None = None) -> int:
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _count_existing(db_path: Path) -> int:
+    """Digimon count in the live DB (0 if it does not exist / is unreadable)."""
+    if not db_path.exists():
+        return 0
+    try:
+        conn = connect_readonly(db_path)
+        try:
+            return int(conn.execute("SELECT COUNT(*) FROM digimon").fetchone()[0])
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return 0
+
+
+def _clear_http_cache(cache_dir: Path, parent: Path) -> bool:
+    """Delete only the repo-internal HTTP cache under `parent`.
+
+    ``--force`` must never remove an arbitrary/unvalidated path (T1.6): we
+    resolve the cache dir and refuse to touch anything outside the data dir.
+    """
+    if not cache_dir.exists():
+        return True
+    try:
+        resolved = cache_dir.resolve()
+        parent_resolved = parent.resolve()
+    except OSError:
+        logger.error("force: cannot resolve cache path %s; refusing to remove", cache_dir)
+        return False
+    if not str(resolved).startswith(str(parent_resolved) + os.sep):
+        logger.error("force: refusing to remove cache dir outside %s: %s", parent, cache_dir)
+        return False
+    shutil.rmtree(cache_dir)
+    logger.info("force: cleared HTTP cache %s", cache_dir)
+    return True
+
+
+def _fetch_sources(sources: list[str], fetcher: Fetcher, force: bool,
+                   state: SyncState, loader) -> tuple[dict[str, list], dict[str, Exception]]:
+    """Fetch each requested source. Returns (records_by_source, failures).
+
+    Any exception (including a source that now returns empty after previously
+    yielding data) is a hard failure: the caller must abort without publishing.
+    """
+    records_by_source: dict[str, list] = {}
+    failures: dict[str, Exception] = {}
+    for name in INGEST_ORDER:
+        if name not in sources:
+            continue
+        logger.info("=== fetching source: %s ===", name)
+        try:
+            adapter = loader(name)
+            records = adapter.fetch(fetcher, force=force)
+            prev = state.previous_records(name)
+            if not records and prev > 0:
+                raise RuntimeError(
+                    f"source {name} returned empty but previously had {prev} records "
+                    f"(possible site change / failed pagination)"
+                )
+            records_by_source[name] = records
+            logger.info("%s: %d records", name, len(records))
+        except Exception as exc:  # noqa: BLE001
+            failures[name] = exc
+            logger.error("source %s failed: %s", name, exc)
+    return records_by_source, failures
+
+
+def _build_db(conn: sqlite3.Connection, records_by_source: dict[str, list],
+              sources: list[str], *, partial: bool) -> None:
+    """MATCH + MERGE + edges + relations + game stats + snapshot on `conn`.
+
+    `conn` is a candidate database; every destructive step is safe because the
+    live DB is never touched.
+    """
+    matcher = Matcher()
+    order = [s for s in ["dapi", "digimons_net", "official", "wikimon"] if s in records_by_source]
+    for name in order:
+        for rec in records_by_source[name]:
+            matcher.add(rec)
+    logger.info("entities: %d (review: %d)", len(matcher.entities), len(matcher.review_queue))
+
+    conn.execute("DELETE FROM digimon")
+    conn.commit()
+    store = CanonicalStore(conn)
+    for _slug, entity in matcher.entities.items():
+        store.upsert_entity(entity)
+    store.commit()
+    logger.info("digimon rows written")
+
+    conn.execute("DELETE FROM evolution_edge")
+    conn.execute("DELETE FROM digimon_relation")
+    conn.commit()
+    resolver = EvolutionResolver(conn)
+    edge_count = 0
+    rel_count = 0
+    for _slug, entity in matcher.entities.items():
+        edge_count += resolver.add_edges_for_entity(entity)
+        rel_count += resolver.add_relations_for_entity(entity)
+    conn.commit()
+    logger.info("evolution edges: %d, relations: %d", edge_count, rel_count)
+
+    from pipeline.merge.relations import infer_relations
+
+    rel_inferred = infer_relations(conn)
+    if rel_inferred:
+        logger.info("inferred related-form relations: %d", rel_inferred)
+
+    _load_fan_aliases(conn)
+
+    if "digidb" in records_by_source:
+        from pipeline.sources.digidb import import_game_stats
+
+        import_game_stats(conn, records_by_source["digidb"])
+        logger.info("game stats imported (game: cyber-sleuth)")
+
+    for item in matcher.review_queue:
+        store.queue_review("digimon", None, item["reason"], item)
+    store.commit()
+
+    store.rebuild_fts()
+    notes = f"sources={','.join(sources)}"
+    if partial:
+        notes += " partial=true"
+    snap = store.write_snapshot(notes=notes)
+    logger.info("snapshot: %s", snap)
+    conn.commit()
+
+
+def _preserve_review_history(db_path: Path, conn: sqlite3.Connection) -> None:
+    """Carry resolved/wontfix review items from the live DB into the candidate.
+
+    The candidate rebuilds the queue from current data, but human decisions
+    (resolved/wontfix) must persist across syncs (they are not regenerated).
+    Open items are always regenerated, so only resolved/wontfix are copied.
+    """
+    if not db_path.exists():
+        return
+    try:
+        old = connect_readonly(db_path)
+    except sqlite3.Error:
+        return
+    try:
+        rows = old.execute(
+            """SELECT entity_type, entity_id, reason, detail, status, resolved_at
+               FROM manual_review_queue
+               WHERE status IN ('resolved','wontfix')"""
+        ).fetchall()
+        copied = 0
+        for r in rows:
+            cur = conn.execute(
+                """INSERT OR IGNORE INTO manual_review_queue
+                   (entity_type, entity_id, reason, detail, status, resolved_at)
+                   VALUES(?,?,?,?,?,?)""",
+                [r["entity_type"], r["entity_id"], r["reason"], r["detail"], r["status"], r["resolved_at"]],
+            )
+            copied += cur.rowcount
+        if copied:
+            conn.commit()
+            logger.info("preserved %d resolved/wontfix review items", copied)
+    finally:
+        old.close()
+
+
+def _publish(candidate: Path, target: Path) -> None:
+    """Atomically replace the live DB with the (checkpointed) candidate.
+
+    The caller must have closed every connection to `candidate` first
+    (Windows refuses os.replace on open files).
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(candidate, target)
+    # main file moved; drop any leftover -wal/-shm/-journal sidecars
+    cleanup_db_files(candidate)
+    logger.info("published %s (atomic replace)", target)
+
+
+def _update_state(state: SyncState, records_by_source: dict[str, list],
+                  sources: list[str]) -> None:
+    """Record per-source hashes/counts ONLY after a successful publish."""
+    for name, records in records_by_source.items():
+        digest = hashlib.sha256(
+            _json.dumps(
+                [[r.source_id, [n.value for n in r.names]] for r in records],
+                default=str, sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()[:16]
+        state.set(name, content_hash=digest, last_seen_at=_now(), records=len(records))
+    state.set("sync_data", sources=sources)
+
+
+def _write_validation_report(db_path: Path, reports_dir: Path | None, skip: bool) -> dict | None:
+    """Run validation on `db_path`, writing reports; return the report or None."""
+    if skip:
+        logger.info("validation skipped (--skip-validation)")
+        return None
+    from pipeline.validation.validator import run_and_write
+
+    report = run_and_write(db_path, reports_dir=reports_dir)
+    ic = report["issue_counts"]
+    logger.info(
+        "validation: %d errors, %d warnings, %d info",
+        ic["error"], ic["warning"], ic["info"],
+    )
+    logger.info("reports -> %s", "data/reports/data-quality.{json,md}")
+    return report
+
+
+def run(argv: list[str] | None = None, *, loader=None, reports_dir: Path | None = None) -> int:
+    """Full sync entrypoint. `loader` is injectable for tests (defaults to
+    the real `load_source`); `reports_dir` overrides where reports are written."""
     ap = argparse.ArgumentParser(description="DigiDex data sync pipeline")
     ap.add_argument(
         "--sources",
         default="dapi,official,digimons_net",
         help="comma-separated sources (default: dapi,official,digimons_net)",
     )
-    ap.add_argument("--force", action="store_true", help="bypass HTTP cache, re-fetch")
+    ap.add_argument("--force", action="store_true", help="clear the HTTP cache and re-fetch")
     ap.add_argument("--skip-validation", action="store_true")
     ap.add_argument("--partial-ok", action="store_true",
-                    help="allow a source subset against an already-populated database")
+                    help="allow a source subset against an already-populated database "
+                         "(builds a partial candidate; does NOT publish unless --publish-partial)")
+    ap.add_argument("--publish-partial", action="store_true",
+                    help="explicitly publish a partial (source-subset) candidate, "
+                         "marking the snapshot as partial")
     ap.add_argument("--images", action="store_true", help="also download images after sync")
     args = ap.parse_args(argv)
 
@@ -113,165 +365,130 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("unknown sources: %s", missing)
         return 1
 
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    # --force: ignore the HTTP cache entirely (fetch fresh from sources)
-    if args.force:
-        cache_dir = DB_PATH.parent / ".http_cache"
-        if cache_dir.exists():
-            import shutil
+    db_path = _resolve_db_path()
+    candidate = db_path.with_name(db_path.stem + ".candidate.sqlite")
+    cache_dir = db_path.parent / ".http_cache"
+    state = SyncState(db_path.parent / ".sync_state.json")
 
-            shutil.rmtree(cache_dir)
-            logger.info("force: cleared HTTP cache %s", cache_dir)
-    conn = connect(DB_PATH)
-    create_schema(conn)
-    # conflicts, provenance, and open review items are regenerated from the
-    # current data each run (resolved/wontfix review items persist).
-    conn.execute("DELETE FROM data_conflict")
-    conn.execute("DELETE FROM provenance")
-    conn.execute("DELETE FROM manual_review_queue WHERE status = 'open'")
-    conn.commit()
-    state = SyncState()
+    # --force: remove the repo-internal HTTP cache (validated path only).
+    if args.force and not _clear_http_cache(cache_dir, db_path.parent):
+        return 1
+
     try:
-        # Guard: running a source subset that EXCLUDES a previously-ingested
-        # source silently wipes that source's derived rows (groups/skills/
-        # aliases/images) for re-written entities. Refuse unless --partial-ok.
-        existing = conn.execute("SELECT COUNT(*) FROM digimon").fetchone()[0]
-        prev_sources = state.get("sync_data").get("sources", [])
-        dropped = [s for s in prev_sources if s not in sources]
-        if existing > 0 and dropped and not args.partial_ok:
+        with sync_lock(db_path.parent / ".sync.lock"):
+            return _run_locked(args, sources, db_path, candidate, cache_dir,
+                               state, loader or load_source, reports_dir or REPORTS_DIR)
+    except SyncLockError as exc:
+        logger.error("%s", exc)
+        return 1
+
+
+def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
+                cache_dir: Path, state: SyncState, loader, reports_dir: Path) -> int:
+    # --- guard: running a source subset that EXCLUDES a previously-ingested
+    # source would wipe that source's derived rows from the published DB.
+    existing = _count_existing(db_path)
+    prev_sources = state.get("sync_data").get("sources", [])
+    dropped = [s for s in prev_sources if s not in sources]
+    if existing > 0 and dropped and not args.partial_ok:
+        logger.error(
+            "Database has %d digimon and was last synced with sources %s; "
+            "this run drops %s, which would wipe their derived data. "
+            "Re-run including them, or pass --partial-ok to build a partial "
+            "candidate (still not published without --publish-partial).",
+            existing, prev_sources, dropped,
+        )
+        return 1
+
+    cleanup_db_files(candidate)  # remove any stale candidate from a prior run
+    conn: sqlite3.Connection | None = None
+    fetcher: Fetcher | None = None
+    keep_candidate = False
+    try:
+        conn = connect(candidate)
+        create_schema(conn)
+        fetcher = make_fetcher(cache_dir=cache_dir)
+
+        records_by_source, failures = _fetch_sources(sources, fetcher, args.force, state, loader)
+
+        if failures:
+            # Hard failure: never publish. Build a best-effort inspection
+            # candidate + report from whatever fetched, then exit non-zero.
+            logger.error("required source(s) failed: %s", ", ".join(failures))
+            if records_by_source:
+                try:
+                    _build_db(conn, records_by_source, sources, partial=True)
+                    _write_validation_report(candidate, reports_dir, args.skip_validation)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("could not build inspection candidate: %r", exc)
+            logger.error("sync FAILED; official database unchanged")
+            return 1
+
+        partial = bool(existing > 0 and dropped)
+        _build_db(conn, records_by_source, sources, partial=partial)
+
+        # candidate validation is a publication gate (T1.4 / T2.10)
+        report = _write_validation_report(candidate, reports_dir, args.skip_validation)
+        if report is not None and report["issue_counts"]["error"]:
             logger.error(
-                "Database has %d digimon and was last synced with sources %s; "
-                "this run drops %s, which would wipe their derived data. "
-                "Re-run including them, or pass --partial-ok to override.",
-                existing, prev_sources, dropped,
+                "validation: %d errors; candidate NOT published (live DB unchanged)",
+                report["issue_counts"]["error"],
             )
             return 1
-        fetcher = make_fetcher(cache_dir=DB_PATH.parent / ".http_cache")
 
-        matcher = Matcher()
-        # 1. fetch all records. Ingest order matters for entity matching:
-        #    dapi (backbone, en names) -> digimons_net (adds ja/zh names, so the
-        #    dapi entities can be matched by ja/zh later) -> official (official
-        #    en names often use dub forms like "Omnimon"/"Gatomon", so they are
-        #    resolved by their ja name once digimons_net has seeded it)
-        #    -> wikimon -> digidb.
-        records_by_source: dict[str, list] = {}
-        for name in ["dapi", "digimons_net", "official", "wikimon", "digidb"]:
-            if name not in sources:
-                continue
-            logger.info("=== fetching source: %s ===", name)
-            try:
-                adapter = load_source(name)
-                records = adapter.fetch(fetcher, force=args.force)
-                logger.info("%s: %d records", name, len(records))
-                records_by_source[name] = records
-                # incremental signal (§47): record content_hash per source.
-                # We still re-process for correctness (merge is idempotent and
-                # fast via the HTTP cache), but the hash lets callers / future
-                # runs detect unchanged sources.
-                import hashlib
-                import json as _json
+        # preserve resolved/wontfix review history into the candidate first
+        _preserve_review_history(db_path, conn)
 
-                digest = hashlib.sha256(
-                    _json.dumps(
-                        [[r.source_id, [n.value for n in r.names]] for r in records],
-                        default=str, sort_keys=True,
-                    ).encode("utf-8")
-                ).hexdigest()[:16]
-                prev = state.get(name).get("content_hash")
-                state.set(name, content_hash=digest, last_seen_at=__import__("datetime").datetime.now().isoformat(timespec="seconds"))
-                if prev == digest and not args.force:
-                    logger.info("%s: content unchanged (hash %s)", name, digest)
-                else:
-                    logger.info("%s: content hash %s (changed)", name, digest)
-            except ImportError as exc:
-                logger.warning("source %s not implemented yet: %s", name, exc)
-            except Exception as exc:  # noqa: BLE001
-                logger.error("source %s failed: %s", name, exc)
-
-        # 2. entity matching (same order as ingestion; digidb is NOT matched —
-        #    it is a game-stats overlay that only attaches to existing entities)
-        order = [s for s in ["dapi", "digimons_net", "official", "wikimon"] if s in records_by_source]
-        for name in order:
-            for rec in records_by_source[name]:
-                matcher.add(rec)
-        logger.info("entities: %d (review: %d)", len(matcher.entities), len(matcher.review_queue))
-
-        # 3. merge entities -> DB (full rebuild: clear digimon + cascading
-        #    derived rows so stale entities from a different source set or a
-        #    previous matcher never linger)
-        conn.execute("DELETE FROM digimon")
-        conn.commit()
-        store = CanonicalStore(conn)
-        for slug, entity in matcher.entities.items():
-            store.upsert_entity(entity)
-        store.commit()
-        logger.info("digimon rows written")
-
-        # 4. resolve evolution edges + relations (rebuilt from records each run)
-        conn.execute("DELETE FROM evolution_edge")
-        conn.execute("DELETE FROM digimon_relation")
-        conn.commit()
-        resolver = EvolutionResolver(conn)
-        edge_count = 0
-        rel_count = 0
-        for slug, entity in matcher.entities.items():
-            edge_count += resolver.add_edges_for_entity(entity)
-            rel_count += resolver.add_relations_for_entity(entity)
-        conn.commit()
-        logger.info("evolution edges: %d, relations: %d", edge_count, rel_count)
-
-        # 4a. infer related forms (x_antibody / black_variant / mode_change)
-        from pipeline.merge.relations import infer_relations
-
-        rel_inferred = infer_relations(conn)
-        if rel_inferred:
-            logger.info("inferred related-form relations: %d", rel_inferred)
-
-        # 4b. curated fan aliases (spec §7 fan_translation, §35 部分匹配)
-        _load_fan_aliases(conn)
-
-        # 4b. game stats (digidb overlay) — separate from world-view data
-        if "digidb" in records_by_source:
-            from pipeline.sources.digidb import import_game_stats
-
-            import_game_stats(conn, records_by_source["digidb"])
-            logger.info("game stats imported (game: cyber-sleuth)")
-
-        # 5. write review queue + conflicts
-        for item in matcher.review_queue:
-            store.queue_review("digimon", None, item["reason"], item)
-        store.commit()
-
-        # 6. finalize
-        store.rebuild_fts()
-        snap = store.write_snapshot(notes=f"sources={args.sources}")
-        logger.info("snapshot: %s", snap)
-        state.set("sync_data", sources=sources)
-        state.save()
-        fetcher.close()
-
-        # 7. validation
-        if not args.skip_validation:
-            from pipeline.validation.validator import run_and_write
-
-            report = run_and_write(DB_PATH)
-            ic = report["issue_counts"]
+        # Partial (source-subset) run: build + report but do NOT publish by
+        # default. Publishing a partial snapshot requires an explicit override.
+        if partial and not args.publish_partial:
+            checkpoint_and_close(conn)
+            conn = None
+            cleanup_sidecars(candidate)
+            keep_candidate = True
             logger.info(
-                "validation: %d errors, %d warnings, %d info",
-                ic["error"], ic["warning"], ic["info"],
+                "partial candidate built at %s; NOT published. "
+                "Re-run with --publish-partial to publish a partial snapshot.",
+                candidate,
             )
-            logger.info("reports -> %s", "data/reports/data-quality.{json,md}")
+            return 0
 
-        # 8. optional images
+        # Publish: checkpoint WAL into the main file, close all connections,
+        # then atomically replace the live DB.
+        checkpoint_and_close(conn)
+        conn = None
+        _publish(candidate, db_path)
+
+        _update_state(state, records_by_source, sources)
+        state.save()
+        logger.info("snapshot published to %s", db_path)
+
+        # optional images (only after a successful publish)
         if args.images:
             from scripts.download_images import download_all
 
-            download_all(DB_PATH)
+            download_all(db_path)
+        return 0
+    except KeyboardInterrupt:
+        logger.error("interrupted; official database unchanged")
+        return 130
+    except Exception as exc:  # noqa: BLE001
+        logger.error("sync FAILED; official database unchanged: %r", exc)
+        return 1
     finally:
-        conn.close()
-    return 0
+        if fetcher is not None:
+            fetcher.close()
+        if conn is not None:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+        if not keep_candidate:
+            cleanup_db_files(candidate)
 
+
+# console-script alias: `sync-data` (see pyproject.toml [project.scripts])
+main = run
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run())
