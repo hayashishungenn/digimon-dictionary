@@ -167,6 +167,13 @@ def main(argv: list[str] | None = None) -> int:
         conn.commit()
         logger.info("evolution edges: %d, relations: %d", edge_count, rel_count)
 
+        # 4a. infer related forms (x_antibody / black_variant / mode_change)
+        from pipeline.merge.relations import infer_relations
+
+        rel_inferred = infer_relations(conn)
+        if rel_inferred:
+            logger.info("inferred related-form relations: %d", rel_inferred)
+
         # 4b. game stats (digidb overlay) — separate from world-view data
         if "digidb" in records_by_source:
             from pipeline.sources.digidb import import_game_stats
