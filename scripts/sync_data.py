@@ -124,8 +124,9 @@ def main(argv: list[str] | None = None) -> int:
             logger.info("force: cleared HTTP cache %s", cache_dir)
     conn = connect(DB_PATH)
     create_schema(conn)
-    # conflicts are regenerated from scratch each run (data_conflict)
+    # conflicts and provenance are regenerated from scratch each run
     conn.execute("DELETE FROM data_conflict")
+    conn.execute("DELETE FROM provenance")
     conn.commit()
     state = SyncState()
     try:

@@ -483,7 +483,7 @@ class CanonicalStore:
             source = rec.source
             url = rec.extra.get("source_url")
         else:
-            source = ",".join({r.source for r in rec.records if r})
+            source = ",".join(sorted({r.source for r in rec.records if r}))
             url = None
         self.conn.execute(
             """INSERT OR IGNORE INTO provenance
