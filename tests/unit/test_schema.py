@@ -31,6 +31,7 @@ EXPECTED_TABLES = {
     "manual_review_queue",
     "game",
     "game_digimon_stats",
+    "game_skill",
     "snapshot",
     "source_sync",
     "digimon_fts",

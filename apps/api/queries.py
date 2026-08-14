@@ -400,7 +400,8 @@ def search_digimon(
     q = query.strip()
     if not q:
         return []
-    q2 = q.replace("'", "''")
+    # 简体/繁体/日文 查询变体：让 "亞古獸" 命中 "亚古兽"（§35 简繁转换）
+    variants = _search_variants(q)
     rows: list[int] = []
     seen: set[int] = set()
 
@@ -409,43 +410,52 @@ def search_digimon(
             seen.add(id_)
             rows.append(id_)
 
-    # 1. exact name matches (any language) rank first
+    # 1. exact name matches (any language, any variant) rank first
+    exact_clause = " OR ".join(
+        ["name_zh_cn = ?"] * len(variants)
+        + ["name_en = ? COLLATE NOCASE"] * len(variants)
+        + ["name_ja = ?"] * len(variants)
+        + ["name_romanized = ? COLLATE NOCASE"] * len(variants)
+        + ["name_en_dub = ? COLLATE NOCASE"] * len(variants)
+    )
+    exact_params = [*variants] * 5
     for r in conn.execute(
-        """SELECT id FROM digimon
-           WHERE name_zh_cn = ? OR name_en = ? COLLATE NOCASE OR name_ja = ?
-              OR name_romanized = ? COLLATE NOCASE OR name_en_dub = ? COLLATE NOCASE
-           LIMIT ?""",
-        [q, q, q, q, q, limit],
+        f"SELECT id FROM digimon WHERE {exact_clause} LIMIT ?",
+        [*exact_params, limit],
     ).fetchall():
         add(r["id"])
 
-    # 1b. exact alias matches (e.g. dapi's "Omegamon" aliasing Omnimon) next
-    for r in conn.execute(
-        """SELECT DISTINCT a.digimon_id FROM digimon_alias a
-           WHERE a.alias = ? COLLATE NOCASE LIMIT ?""",
-        [q, limit],
-    ).fetchall():
-        add(r["digimon_id"])
+    # 1b. exact alias matches
+    for v in variants:
+        for r in conn.execute(
+            """SELECT DISTINCT a.digimon_id FROM digimon_alias a
+               WHERE a.alias = ? COLLATE NOCASE LIMIT ?""",
+            [v, limit],
+        ).fetchall():
+            add(r["digimon_id"])
 
-    # 2. substring (LIKE) matches across primary names
-    like = f"%{q}%"
+    # 2. substring (LIKE) matches across primary names (all variants)
+    like_params: list[str] = []
+    like_where: list[str] = []
+    for v in variants:
+        lv = f"%{v}%"
+        for col in ("name_zh_cn", "name_en", "name_ja", "name_romanized"):
+            like_where.append(f"{col} LIKE ? COLLATE NOCASE")
+            like_params.append(lv)
     like_rows = conn.execute(
-        """SELECT id FROM digimon
-           WHERE name_zh_cn LIKE ? COLLATE NOCASE
-              OR name_en LIKE ? COLLATE NOCASE
-              OR name_ja LIKE ? COLLATE NOCASE
-              OR name_romanized LIKE ? COLLATE NOCASE
-           LIMIT ?""",
-        [like, like, like, like, limit * 2],
+        f"""SELECT id FROM digimon WHERE {' OR '.join(like_where)} LIMIT ?""",
+        [*like_params, limit * 2],
     ).fetchall()
     for r in like_rows:
         add(r["id"])
 
-    # 3. alias substring matches
+    # 3. alias substring matches (all variants)
+    alias_where = " OR ".join(["a.alias LIKE ? COLLATE NOCASE"] * len(variants))
+    alias_params = [f"%{v}%" for v in variants]
     for r in conn.execute(
-        """SELECT DISTINCT a.digimon_id FROM digimon_alias a
-           WHERE a.alias LIKE ? COLLATE NOCASE LIMIT ?""",
-        [like, limit * 2],
+        f"""SELECT DISTINCT a.digimon_id FROM digimon_alias a
+            WHERE {alias_where} LIMIT ?""",
+        [*alias_params, limit * 2],
     ).fetchall():
         add(r["digimon_id"])
 
@@ -469,6 +479,21 @@ def search_digimon(
         if d:
             out.append(d)
     return out
+
+
+def _search_variants(q: str) -> list[str]:
+    """Query variants for matching: original + simplified/traditional CJK."""
+    from pipeline.core import naming
+
+    variants = [q]
+    if _has_cjk(q):
+        s = naming.to_simplified(q)
+        t = naming.to_traditional(q)
+        if s not in variants:
+            variants.append(s)
+        if t not in variants:
+            variants.append(t)
+    return variants
 
 
 # --------------------------------------------------------------------------

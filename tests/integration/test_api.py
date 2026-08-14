@@ -103,6 +103,13 @@ def test_search_chinese(client):
     assert any(i["canonical_slug"] == "agumon" for i in items)
 
 
+def test_search_traditional_chinese_converts(client):
+    # §35: 简繁转换 — 繁体 "亞古獸" must hit the same 亚古兽 entity
+    r = client.get("/api/search", params={"q": "亞古獸"})
+    items = r.json()["items"]
+    assert any(i["canonical_slug"] == "agumon" for i in items)
+
+
 def test_search_japanese(client):
     r = client.get("/api/search", params={"q": "アグモン"})
     items = r.json()["items"]

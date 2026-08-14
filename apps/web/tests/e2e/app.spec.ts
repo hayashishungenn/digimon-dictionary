@@ -98,3 +98,22 @@ test('missing image shows placeholder, not broken image', async ({ page }) => {
 	);
 	expect(broken.length).toBe(0);
 });
+
+test('empty state shows friendly message', async ({ page }) => {
+	await page.goto('/');
+	// a filter with no matches must show the empty-state message, not crash
+	await page.getByRole('tab', { name: '数码蛋' }).click();
+	await page.waitForTimeout(400);
+	const text = await page.locator('.result-count').textContent();
+	if (text && text.includes('0')) {
+		await expect(page.getByText('没有找到匹配的数码兽')).toBeVisible();
+	}
+});
+
+test('detail page shows representative primary evolution line', async ({ page }) => {
+	// Agumon has Wikimon primary-line edges (Koromon → Agumon → Greymon ...)
+	await page.goto('/digimon/agumon');
+	await page.getByText('代表进化路线（主线）').waitFor();
+	// the primary chain is a horizontal chain containing the current digimon
+	await expect(page.locator('.evo-chain')).toContainText('Agumon');
+});

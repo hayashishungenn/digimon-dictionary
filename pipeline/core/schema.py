@@ -292,6 +292,22 @@ SCHEMA_DDL: list[str] = [
         source      TEXT,
         UNIQUE (game_id, digimon_id)
     );
+    -- Game-specific skills, explicitly separated from canonical world-view
+    -- skills (spec §17): a game's "skill" (with game-local effect text/values)
+    -- is a different concept from the canonical special-move entity.
+    CREATE TABLE IF NOT EXISTS game_skill (
+        id          INTEGER PRIMARY KEY,
+        game_id     INTEGER NOT NULL REFERENCES game(id) ON DELETE CASCADE,
+        skill_id    INTEGER REFERENCES skill(id),   -- canonical link when identifiable
+        digimon_id  INTEGER REFERENCES digimon(id),
+        name        TEXT NOT NULL,                  -- game-local skill name
+        description TEXT,
+        effect      TEXT,                           -- game-specific effect
+        power       INTEGER,
+        element     TEXT,
+        source      TEXT,
+        UNIQUE (game_id, name, digimon_id)
+    );
     """,
     # ---- dataset snapshot / source sync ----------------------------------
     """
