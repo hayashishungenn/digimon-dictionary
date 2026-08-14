@@ -58,6 +58,7 @@ export interface DigimonListItem {
 	name_ja: string | null;
 	name_zh_cn_status: string | null;
 	level: string | null;
+	level_2: string | null;
 	attribute: string | null;
 	x_antibody: boolean;
 	is_official_reference: boolean;

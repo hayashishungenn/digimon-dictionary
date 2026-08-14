@@ -35,6 +35,7 @@ SCHEMA_DDL: list[str] = [
         -- world-view attributes (canonical enums; raw preserved alongside)
         level                   TEXT,
         level_raw               TEXT,
+        level_2                 TEXT,               -- secondary tag (e.g. "Xros Wars")
         attribute               TEXT,
         attribute_raw           TEXT,
         x_antibody              INTEGER NOT NULL DEFAULT 0,
@@ -350,6 +351,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
     """Create all tables + indexes if they do not exist."""
     for ddl in SCHEMA_DDL:
         conn.executescript(ddl)
+    # lightweight migrations for tables created before a column was added
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(digimon)")}
+    if "level_2" not in cols:
+        conn.execute("ALTER TABLE digimon ADD COLUMN level_2 TEXT")
     conn.executescript(
         "INSERT OR IGNORE INTO snapshot(id, snapshot_date) VALUES(1, datetime('now'));"
     )

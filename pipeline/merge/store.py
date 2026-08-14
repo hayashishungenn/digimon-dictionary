@@ -197,6 +197,7 @@ class CanonicalStore:
         level_raw = next((r.level_raw or r.level for r in entity.records if r.level_raw or r.level), None)
         attr_value = next((a.value for a in attrs if a != Attribute.UNKNOWN), "unknown")
         attr_raw = next((r.attribute_raw or r.attribute for r in entity.records if r.attribute_raw or r.attribute), None)
+        level_2 = next((r.extra.get("level_2") for r in entity.records if r.extra.get("level_2")), None)
 
         # external ids
         dapi_id = next((int(r.source_id) for r in entity.records if r.source == "dapi" and r.source_id.isdigit()), None)
@@ -221,7 +222,7 @@ class CanonicalStore:
                     name_romanized=COALESCE(?, name_romanized),
                     name_zh_hk=COALESCE(?, name_zh_hk), name_zh_tw=COALESCE(?, name_zh_tw),
                     name_en_dub=COALESCE(?, name_en_dub),
-                    level=?, level_raw=?, attribute=?, attribute_raw=?,
+                    level=?, level_raw=?, level_2=COALESCE(?, level_2), attribute=?, attribute_raw=?,
                     x_antibody=?, is_official_reference=?, main_image=COALESCE(?, main_image),
                     thumbnail=COALESCE(?, thumbnail),
                     dapi_id=COALESCE(?, dapi_id), wikimon_title=COALESCE(?, wikimon_title),
@@ -235,7 +236,7 @@ class CanonicalStore:
                     zh.status if zh else None, en.value if en else None, ja.value if ja else None,
                     rom.value if rom else None, zh_hk.value if zh_hk else None,
                     zh_tw.value if zh_tw else None, en_dub.value if en_dub else None,
-                    level_value, level_raw, attr_value, attr_raw,
+                    level_value, level_raw, level_2, attr_value, attr_raw,
                     1 if xab else 0, 1 if is_official else 0,
                     image.main if image else None, image.thumb if image else None,
                     dapi_id, wikimon_title, official_slug, digimons_net_slug,
@@ -248,11 +249,11 @@ class CanonicalStore:
                 """INSERT INTO digimon(
                     canonical_slug, name_zh_cn, name_zh_cn_source, name_zh_cn_status,
                     name_zh_cn_verified, name_zh_hk, name_zh_tw, name_en, name_en_dub,
-                    name_ja, name_romanized, level, level_raw, attribute, attribute_raw,
+                    name_ja, name_romanized, level, level_raw, level_2, attribute, attribute_raw,
                     x_antibody, is_official_reference, is_extended, main_image, thumbnail,
                     dapi_id, wikimon_title, official_slug, digimons_net_slug,
                     content_hash, source_last_updated, updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 [
                     slug, zh.value if zh else None, zh.source if zh else None,
                     zh.status if zh else None,
@@ -260,7 +261,7 @@ class CanonicalStore:
                     zh_hk.value if zh_hk else None, zh_tw.value if zh_tw else None,
                     en.value if en else None, en_dub.value if en_dub else None,
                     ja.value if ja else None, rom.value if rom else None,
-                    level_value, level_raw, attr_value, attr_raw,
+                    level_value, level_raw, level_2, attr_value, attr_raw,
                     1 if xab else 0, 1 if is_official else 0, 0 if is_official else 1,
                     image.main if image else None, image.thumb if image else None,
                     dapi_id, wikimon_title, official_slug, digimons_net_slug,

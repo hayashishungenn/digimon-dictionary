@@ -129,7 +129,10 @@
 
 	<div class="section-title">基本信息</div>
 	<div class="basic-grid">
-		<div class="basic-cell"><div class="k">等级 Level</div><div class="v">{levelLabel(data.level ?? 'unknown')}</div></div>
+		<div class="basic-cell"><div class="k">等级 Level</div><div class="v">
+			{levelLabel(data.level ?? 'unknown')}
+			{#if data.level_2}<span class="xros-tag">{data.level_2}</span>{/if}
+		</div></div>
 		<div class="basic-cell"><div class="k">属性 Attribute</div><div class="v">{attrLabel(data.attribute ?? 'unknown')}</div></div>
 		{#if data.types.length}
 			<div class="basic-cell">
@@ -439,5 +442,16 @@
 		font-size: 15px;
 		font-weight: 700;
 		color: var(--accent);
+	}
+	.xros-tag {
+		display: inline-block;
+		margin-left: 6px;
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--gold);
+		background: rgba(255, 200, 87, 0.12);
+		border: 1px solid rgba(255, 200, 87, 0.4);
+		border-radius: 999px;
+		padding: 1px 8px;
 	}
 </style>

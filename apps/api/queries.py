@@ -27,7 +27,7 @@ LIST_COLUMNS = """
 # Full column set for detail pages (everything the UI can show).
 FULL_COLUMNS = LIST_COLUMNS + """
     , d.name_zh_cn_source, d.name_zh_cn_verified, d.name_zh_hk, d.name_zh_tw,
-    d.name_en_dub, d.name_romanized, d.level_raw, d.attribute_raw,
+    d.name_en_dub, d.name_romanized, d.level_raw, d.attribute_raw, d.level_2,
     d.first_appearance_title, d.first_appearance_medium,
     d.profile_zh_cn, d.profile_en, d.profile_ja,
     d.profile_source, d.profile_source_url, d.profile_verified,

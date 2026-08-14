@@ -161,6 +161,30 @@ def test_no_level_special_entity(tmp_path):
     assert lv == "unknown"
 
 
+def test_xros_wars_level_2(tmp_path):
+    """Xros（§64）：官方 level_2 标记（如 Xros Wars / 合体战争）应保存."""
+    conn = connect(tmp_path / "xw.sqlite")
+    create_schema(conn)
+    rec = _rec("official", "shoutmon_x2", "Shoutmon X2", level="Adult")
+    rec.extra["level_2"] = "Xros Wars"
+    _store(conn, ("shoutmon-x2", rec))
+    l2 = conn.execute("SELECT level_2 FROM digimon WHERE canonical_slug='shoutmon-x2'").fetchone()[0]
+    assert l2 == "Xros Wars"
+
+
+def test_armor_and_hybrid_digimon(tmp_path):
+    """装甲体 / 混合体 数码兽按正确等级入库."""
+    conn = connect(tmp_path / "ah.sqlite")
+    create_schema(conn)
+    _store(conn,
+        ("magnamon", _rec("dapi", "1", "Magnamon", level="Armor")),
+        ("agnimon", _rec("dapi", "2", "Agnimon", level="Hybrid")),
+    )
+    rows = {r[0]: r[1] for r in conn.execute("SELECT canonical_slug, level FROM digimon")}
+    assert rows["magnamon"] == "armor"
+    assert rows["agnimon"] == "hybrid"
+
+
 def test_evolution_resolver_unknown_target_skipped(tmp_path):
     """进化到未知实体 → 跳过（禁悬空引用，§54）."""
     conn = connect(tmp_path / "e.sqlite")

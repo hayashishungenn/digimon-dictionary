@@ -163,6 +163,7 @@ class OfficialAdapter(SourceAdapter):
         slug_names: dict[str, dict[str, str]] = {}  # slug -> {lang: name}
         slug_levels: dict[str, dict[str, str]] = {}
         slug_xab: dict[str, bool] = {}
+        slug_level2: dict[str, str] = {}  # Xros Wars marker (level_2)
         all_slugs: list[str] = []
         for lang in self.languages:
             rows = self._fetch_list(of, lang)
@@ -173,6 +174,12 @@ class OfficialAdapter(SourceAdapter):
                 if r.level:
                     slug_levels.setdefault(r.directory_name, {})[lang] = r.level
                 slug_xab[r.directory_name] = slug_xab.get(r.directory_name, False) or r.x_antibody
+                if r.level_2:
+                    # prefer the English marker ("Xros Wars") over localized ones
+                    if lang == "en":
+                        slug_level2[r.directory_name] = r.level_2
+                    else:
+                        slug_level2.setdefault(r.directory_name, r.level_2)
 
         # de-dup slugs while preserving first-seen order
         seen: set[str] = set()
@@ -225,6 +232,8 @@ class OfficialAdapter(SourceAdapter):
                 rec.level_raw = levels["ja"]
             rec.extra["level_ja"] = levels.get("ja")
             rec.extra["level_zh"] = levels.get("zh_cn")
+            if slug_level2.get(slug):
+                rec.extra["level_2"] = slug_level2[slug]  # Xros Wars marker
 
             d = details.get(slug, {})
             if d.get("info_type"):
