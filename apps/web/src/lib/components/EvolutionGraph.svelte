@@ -19,6 +19,26 @@
 	let primaryIn = $derived(graph.edges.filter((e) => e.to === centerId && e.is_primary_line && e.from !== centerId));
 	let primaryOut = $derived(graph.edges.filter((e) => e.from === centerId && e.is_primary_line && e.to !== centerId));
 	let hasPrimary = $derived(primaryIn.length > 0 || primaryOut.length > 0);
+
+	function typeLabel(t: string): string {
+		const map: Record<string, string> = {
+			normal: '通常进化',
+			jogress: '合体进化',
+			dna: 'DNA进化',
+			armor: '装甲进化',
+			spirit: '斗士精神',
+			slide: '滑动进化',
+			mode_change: '模式变化',
+			x_evolution: 'X进化',
+			burst: '爆裂模式',
+			fusion: '融合',
+			death: '死亡进化',
+			special: '特殊',
+			game_specific: '游戏限定',
+			unknown: ''
+		};
+		return map[t] ?? t;
+	}
 </script>
 
 <div class="evo">
@@ -76,6 +96,9 @@
 								<span class="n-block">
 									<span class="n-zh">{graph.nodes[String(e.from)].name_zh_cn ?? '—'}</span>
 									<span class="n-en">{graph.nodes[String(e.from)].name_en}</span>
+									{#if e.condition || e.evolution_type !== 'normal'}
+										<span class="n-cond">{typeLabel(e.evolution_type)}{e.condition ? ` · ${e.condition}` : ''}</span>
+									{/if}
 								</span>
 							</a>
 						{/each}
@@ -105,6 +128,9 @@
 								<span class="n-block">
 									<span class="n-zh">{graph.nodes[String(e.to)].name_zh_cn ?? '—'}</span>
 									<span class="n-en">{graph.nodes[String(e.to)].name_en}</span>
+									{#if e.condition || e.evolution_type !== 'normal'}
+										<span class="n-cond">{typeLabel(e.evolution_type)}{e.condition ? ` · ${e.condition}` : ''}</span>
+									{/if}
 								</span>
 							</a>
 						{/each}
@@ -143,6 +169,14 @@
 	.evo-chain .evo-node.center {
 		border-color: var(--accent);
 		box-shadow: 0 0 0 1px rgba(53, 208, 255, 0.35);
+	}
+	.n-cond {
+		display: block;
+		font-size: 10px;
+		color: var(--accent-2);
+		margin-top: 1px;
+		line-height: 1.3;
+		max-width: 200px;
 	}
 	.section-title.small {
 		margin: 14px 0 6px;
