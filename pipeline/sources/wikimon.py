@@ -260,6 +260,7 @@ class WikimonAdapter(SourceAdapter):
             rate_per_second=self.rate_per_second,
             max_concurrency=2,
             cache_dir=fetcher._cache_dir,
+            force=force,
         )
         titles = self._all_pages(wf)
         logger.info("wikimon: %d pages enumerated", len(titles))

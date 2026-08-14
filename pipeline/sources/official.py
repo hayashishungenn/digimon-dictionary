@@ -74,7 +74,7 @@ class OfficialAdapter(SourceAdapter):
         self.languages = languages
         self.fetch_details = fetch_details
 
-    def _make_fetcher(self, fetcher: Any) -> Any:
+    def _make_fetcher(self, fetcher: Any, force: bool = False) -> Any:
         """The reference site's AJAX endpoint requires browser-like headers."""
         from pipeline.core.request import Fetcher
 
@@ -82,6 +82,7 @@ class OfficialAdapter(SourceAdapter):
             rate_per_second=1.0,
             max_concurrency=2,
             cache_dir=fetcher._cache_dir,
+            force=force,
             headers={
                 "Referer": f"{REFERENCE_URL}/reference_en/",
                 "X-Requested-With": "XMLHttpRequest",
@@ -158,7 +159,7 @@ class OfficialAdapter(SourceAdapter):
 
     # ------------------------------------------------------------- pipeline
     def fetch(self, fetcher: Any, force: bool = False) -> list[SourceDigimon]:
-        of = self._make_fetcher(fetcher)
+        of = self._make_fetcher(fetcher, force=force)
         # 1. lists per language -> slug -> per-language names/levels/xab
         slug_names: dict[str, dict[str, str]] = {}  # slug -> {lang: name}
         slug_levels: dict[str, dict[str, str]] = {}

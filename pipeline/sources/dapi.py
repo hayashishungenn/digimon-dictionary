@@ -97,6 +97,7 @@ class DapiAdapter(SourceAdapter):
             rate_per_second=self.rate_per_second,
             max_concurrency=self.max_concurrency,
             cache_dir=fetcher._cache_dir,
+            force=force,
         )
         # fetch, tracking failures for a re-sweep (digi-api has ~1% transient resets)
         records: list[SourceDigimon] = []

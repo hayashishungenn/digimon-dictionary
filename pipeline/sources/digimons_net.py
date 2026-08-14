@@ -38,13 +38,14 @@ class DigimonsNetAdapter(SourceAdapter):
     def __init__(self, rate_per_second: float = 1.5) -> None:
         self.rate_per_second = rate_per_second
 
-    def _make_fetcher(self, fetcher: Any) -> Any:
+    def _make_fetcher(self, fetcher: Any, force: bool = False) -> Any:
         from pipeline.core.request import Fetcher
 
         return Fetcher(
             rate_per_second=self.rate_per_second,
             max_concurrency=2,
             cache_dir=fetcher._cache_dir,
+            force=force,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) DigiDex/0.1 research"},
         )
 
@@ -54,7 +55,7 @@ class DigimonsNetAdapter(SourceAdapter):
         return html
 
     def fetch(self, fetcher: Any, force: bool = False) -> list[SourceDigimon]:
-        df = self._make_fetcher(fetcher)
+        df = self._make_fetcher(fetcher, force=force)
         html = self._fetch_sort_index(df)
         soup = BeautifulSoup(html, "lxml")
 
