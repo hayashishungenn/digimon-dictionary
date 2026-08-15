@@ -79,10 +79,21 @@
       `scripts/restore_local.py`（先校验 manifest+哈希+integrity+schema 兼容，再写临时文件，原子替换，
       失败正式库不变，默认 dry-run/需 `--yes`）、`scripts/inspect_snapshot.py`（实时或备份目录的
       快照摘要，`--json`）。真实 DB 备份→恢复→临时目标验证通过；Windows 路径带空格可用。
+- [x] **UI-P0 前端核心**：UI-P0-0 审计与参考基线、UI-P0-1 壳层/导航/状态条/tokens、
+      UI-P0-2 首页搜索/筛选/卡片/移动抽屉、UI-P0-3 详情页可信度（profile 核验/技能缺口）、
+      UI-P0-4 进化图（截断原因/节点等级/类型图例）。fixture E2E 18 + realdb E2E 18 全绿。
+- [x] **S1-1 人工复核队列工作流**：schema v8 为 `manual_review_queue` 增加 `run_id` + `note`；
+      派生 category（external_target / matching_failure / conflict / wikitext / other，区分
+      "外部目标不在当前集合"与"匹配失败"）；`GET /api/review`（status/entity-type/q/category +
+      分页）、`/api/review/stats`、`/api/review/export`（JSON/CSV，不删除）、
+      `POST /api/review/{id}/resolve`（resolved/wontfix 必须带说明，wontfix ≠ 事实已验证）；
+      `scripts/review_queue.py`（stats/list/show/resolve/export）；API/CLI/迁移测试 + 真实 DB 验证
+      （775 开放项，wikitext 原文保留）。
 
 ### 待完成
 
-- [ ] UI-P0 系列前端核心（壳层 / 首页搜索筛选卡片 / 详情页 / 进化体验）
-- [ ] S1-1 人工复核队列工作流、S1-2 数据覆盖、S1-3 搜索筛选导出、S1-4 本地维护体验
-- [ ] UI-P1 / UI-P2（状态系统 / 响应式与可访问性 / 图片性能 / 动效 / 个人收藏）
+- [ ] S1-2 数据覆盖（固定名单/官方集合日文缺口/扩展集合中译名等，按价值排序）
+- [ ] S1-3 搜索/筛选/导出效率（URL 保存筛选、导出含 snapshot/来源、SQL 与耗时记录）
+- [ ] S1-4 本地启动与维护体验（诊断脚本、PowerShell 启动脚本、README 核对）
+- [ ] UI-P1 / UI-P2（加载/空/错误状态系统、响应式与可访问性、图片性能、动效、个人收藏）
 - [ ] S2-1 个人注释标签收藏、S2-2 独立游戏技能接入

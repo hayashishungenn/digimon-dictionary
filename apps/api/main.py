@@ -5,6 +5,7 @@ Database access is read-only via SQLite.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
@@ -14,7 +15,8 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from pydantic import BaseModel, Field
 
 from pipeline.core.enums import Attribute, Level
 from pipeline.core.schema import connect_readonly
@@ -79,6 +81,21 @@ def _db() -> Any:
     if not db.exists():
         raise HTTPException(503, "Dataset not synced yet. Run `uv run python scripts/sync_data.py`.")
     return connect_readonly(db)
+
+
+def _db_write() -> Any:
+    """Writable connection for the review-resolve endpoint (S1-1).
+
+    The API is otherwise read-only; only a human marking a review item
+    resolved/wontfix writes, and that goes through the pipeline's normal
+    SQLite pragmas (WAL, foreign keys).
+    """
+    db = _db_path()
+    if not db.exists():
+        raise HTTPException(503, "Dataset not synced yet. Run `uv run python scripts/sync_data.py`.")
+    from pipeline.core.schema import connect
+
+    return connect(db)
 
 
 def _thumb_servable(item: dict[str, Any]) -> str | None:
@@ -312,6 +329,93 @@ def group_detail(group_name: str) -> dict[str, Any]:
         for m in members:
             m["thumbnail"] = _thumb_servable(m)
         return {"name": group_name, "members": members, "count": len(members)}
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------------------
+# manual review workflow (S1-1): filter, resolve, export, stats
+# --------------------------------------------------------------------------
+class ResolveReviewRequest(BaseModel):
+    status: str = Field(pattern="^(resolved|wontfix)$")
+    note: str = Field(min_length=1, description="explanation — wontfix ≠ fact verified")
+
+
+@app.get("/api/review")
+def list_review(
+    status: str = Query(default="open", pattern="^(open|resolved|wontfix)$"),
+    entity_type: str | None = None,
+    q: str | None = None,
+    category: str | None = Query(default=None, pattern="^(external_target|matching_failure|conflict|wikitext|other)$"),
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    conn = _db()
+    try:
+        items = queries.list_review_items(
+            conn, status=status, entity_type=entity_type, q=q,
+            category=category, limit=limit, offset=offset,
+        )
+        total = queries.count_review_items(
+            conn, status=status, entity_type=entity_type, q=q, category=category,
+        )
+        return {"items": items, "total": total, "limit": limit, "offset": offset}
+    finally:
+        conn.close()
+
+
+@app.get("/api/review/stats")
+def review_stats() -> dict[str, Any]:
+    conn = _db()
+    try:
+        return queries.review_stats(conn)
+    finally:
+        conn.close()
+
+
+@app.get("/api/review/export")
+def review_export(
+    format: str = Query(default="json", pattern="^(json|csv)$"),
+    status: str = Query(default="open", pattern="^(open|resolved|wontfix)$"),
+    entity_type: str | None = None,
+    q: str | None = None,
+) -> Response:
+    """Export the review queue as JSON or CSV. Read-only — never deletes."""
+    conn = _db()
+    try:
+        items = queries.list_review_items(conn, status=status, entity_type=entity_type, q=q, limit=10000)
+        if format == "csv":
+            import csv as _csv
+            import io as _io
+
+            buf = _io.StringIO()
+            writer = _csv.writer(buf)
+            writer.writerow(["id", "entity_type", "entity_id", "category", "status", "reason",
+                             "detail", "created_at", "resolved_at", "run_id", "note"])
+            for it in items:
+                writer.writerow([
+                    it["id"], it["entity_type"], it["entity_id"], it["category"], it["status"],
+                    it["reason"], json.dumps(it["detail"], ensure_ascii=False),
+                    it["created_at"], it["resolved_at"], it["run_id"], it["note"],
+                ])
+            return Response(content=buf.getvalue(), media_type="text/csv",
+                            headers={"Content-Disposition": "attachment; filename=review_queue.csv"})
+        return JSONResponse({"items": items, "count": len(items)})
+    finally:
+        conn.close()
+
+
+@app.post("/api/review/{review_id}/resolve")
+def resolve_review(review_id: int, body: ResolveReviewRequest) -> dict[str, Any]:
+    conn = _db_write()
+    try:
+        try:
+            row = queries.resolve_review_item(conn, review_id, status=body.status, note=body.note)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if row is None:
+            raise HTTPException(404, f"no open review item #{review_id}")
+        return row
     finally:
         conn.close()
 

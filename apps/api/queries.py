@@ -5,6 +5,7 @@ reach into the pipeline tables directly.
 """
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from typing import Any
@@ -635,6 +636,149 @@ def group_members(conn: sqlite3.Connection, group_name: str) -> list[dict[str, A
         [group_name],
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+# --------------------------------------------------------------------------
+# manual review workflow (S1-1)
+#
+# The review queue is small (hundreds of items), so filtering + category
+# derivation happen in Python after a cheap SQL row scan. `category` is a
+# derived, human-meaningful label that distinguishes *why* an item is queued:
+#   - external_target  : an edge/relation references a target outside the
+#                        current dataset ("unresolved target") — not a match bug
+#   - matching_failure : an entity could not be safely matched/merged
+#   - conflict         : real cross-source disagreement that source priority
+#                        could not resolve
+#   - wikitext         : a user-visible field still carries raw wikitext
+#                        (original preserved here, cleaned value shown in UI)
+#   - other            : anything else (e.g. unmatched game records)
+# --------------------------------------------------------------------------
+def _review_category(reason: str | None) -> str:
+    r = (reason or "").lower()
+    if "wikitext" in r:
+        return "wikitext"
+    if "unresolved" in r or "target" in r or "not in the current" in r:
+        return "external_target"
+    if "ambiguous" in r or "needs review" in r or "not matched" in r:
+        return "matching_failure"
+    if "conflict" in r:
+        return "conflict"
+    return "other"
+
+
+def _review_where(status: str, entity_type: str | None, q: str | None) -> tuple[str, list[Any]]:
+    where = ["status = ?"]
+    params: list[Any] = [status]
+    if entity_type:
+        where.append("entity_type = ?")
+        params.append(entity_type)
+    if q:
+        where.append("(reason LIKE ? ESCAPE '\\' OR detail LIKE ? ESCAPE '\\')")
+        like = f"%{_escape_like(q)}%"
+        params += [like, like]
+    return " AND ".join(where), params
+
+
+def list_review_items(
+    conn: sqlite3.Connection,
+    *,
+    status: str = "open",
+    entity_type: str | None = None,
+    q: str | None = None,
+    category: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    where, params = _review_where(status, entity_type, q)
+    rows = conn.execute(
+        f"""SELECT id, entity_type, entity_id, reason, detail, status,
+                   created_at, resolved_at, run_id, note
+            FROM manual_review_queue WHERE {where} ORDER BY id""",
+        params,
+    ).fetchall()
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        cat = _review_category(r["reason"])
+        if category and cat != category:
+            continue
+        detail = json.loads(r["detail"]) if r["detail"] else {}
+        items.append({**dict(r), "detail": detail, "category": cat})
+    return items[offset : offset + limit]
+
+
+def count_review_items(
+    conn: sqlite3.Connection,
+    *,
+    status: str = "open",
+    entity_type: str | None = None,
+    q: str | None = None,
+    category: str | None = None,
+) -> int:
+    where, params = _review_where(status, entity_type, q)
+    rows = conn.execute(
+        f"SELECT reason FROM manual_review_queue WHERE {where}", params
+    ).fetchall()
+    if category:
+        return sum(1 for r in rows if _review_category(r["reason"]) == category)
+    return len(rows)
+
+
+def review_stats(conn: sqlite3.Connection) -> dict[str, Any]:
+    by_status = {
+        r["status"]: r["c"]
+        for r in conn.execute(
+            "SELECT status, COUNT(*) c FROM manual_review_queue GROUP BY status"
+        )
+    }
+    open_rows = conn.execute(
+        "SELECT entity_type, reason FROM manual_review_queue WHERE status='open'"
+    ).fetchall()
+    by_entity: dict[str, int] = {}
+    by_category: dict[str, int] = {}
+    for r in open_rows:
+        by_entity[r["entity_type"]] = by_entity.get(r["entity_type"], 0) + 1
+        c = _review_category(r["reason"])
+        by_category[c] = by_category.get(c, 0) + 1
+    return {
+        "by_status": by_status,
+        "by_entity": by_entity,
+        "by_category": by_category,
+        "open": by_status.get("open", 0),
+    }
+
+
+def resolve_review_item(
+    conn: sqlite3.Connection,
+    review_id: int,
+    *,
+    status: str,
+    note: str,
+) -> dict[str, Any] | None:
+    """Mark a review item resolved/wontfix with an explanation.
+
+    A note is required: 'wontfix' means 'won't chase this now', NOT that the
+    underlying fact is verified (S1-1). The original candidates are preserved
+    (never deleted). Returns the updated row, or None when the item does not
+    exist or is already closed.
+    """
+    if status not in ("resolved", "wontfix"):
+        raise ValueError("status must be 'resolved' or 'wontfix'")
+    if not note or not note.strip():
+        raise ValueError("a resolution note is required")
+    cur = conn.execute(
+        """UPDATE manual_review_queue SET status=?, note=?, resolved_at=datetime('now')
+           WHERE id=? AND status='open'""",
+        [status, note.strip(), review_id],
+    )
+    conn.commit()
+    if cur.rowcount == 0:
+        return None
+    row = conn.execute(
+        """SELECT id, entity_type, entity_id, reason, status, note, resolved_at
+           FROM manual_review_queue WHERE id=?""",
+        [review_id],
+    ).fetchone()
+    return dict(row) if row else None
 
 
 def get_snapshot(conn: sqlite3.Connection) -> dict[str, Any] | None:

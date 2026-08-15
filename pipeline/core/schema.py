@@ -22,7 +22,7 @@ from pathlib import Path
 # the DB's `PRAGMA user_version`. Migrations are additive and never drop or
 # destroy data — an old DB is upgraded in place, so existing rows survive.
 # ---------------------------------------------------------------------------
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 def _migrate_v1(conn: sqlite3.Connection) -> None:
@@ -210,6 +210,21 @@ def _migrate_v7(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE provenance ADD COLUMN run_id TEXT")
 
 
+def _migrate_v8(conn: sqlite3.Connection) -> None:
+    """v7 -> v8: manual_review_queue becomes an auditable workflow (S1-1).
+
+    Adds ``run_id`` (which sync run queued the item — same provenance model as
+    P1-2) and ``note`` (the reviewer's resolution explanation). Combined with
+    the existing ``resolved_at`` this makes the queue filterable, resolvable,
+    and auditable without losing the original candidates.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(manual_review_queue)")}
+    if "run_id" not in cols:
+        conn.execute("ALTER TABLE manual_review_queue ADD COLUMN run_id TEXT")
+    if "note" not in cols:
+        conn.execute("ALTER TABLE manual_review_queue ADD COLUMN note TEXT")
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_v1,
     2: _migrate_v2,
@@ -218,6 +233,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     5: _migrate_v5,
     6: _migrate_v6,
     7: _migrate_v7,
+    8: _migrate_v8,
 }
 
 
@@ -487,7 +503,9 @@ SCHEMA_DDL: list[str] = [
         detail      TEXT,                    -- JSON payload
         status      TEXT NOT NULL DEFAULT 'open',  -- open|resolved|wontfix
         created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-        resolved_at TEXT
+        resolved_at TEXT,
+        run_id      TEXT,                    -- sync run that queued the item (S1-1)
+        note        TEXT                     -- reviewer resolution explanation (S1-1)
     );
     """,
     # ---- game stats (独立于世界观) ---------------------------------------

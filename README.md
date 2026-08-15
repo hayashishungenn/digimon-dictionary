@@ -80,6 +80,7 @@ npm run dev                   # http://localhost:5173
 | `backup_local.py` | 本地备份到 `data/backups/backup-<时间戳>/`（DB+同步状态+发布 manifest+报告，可选图片缓存，`--with-images` / `--keep N` / `--dry-run`） |
 | `restore_local.py` | 从备份恢复（先校验哈希/integrity/schema，再原子替换；默认 dry-run，覆盖需 `--yes`） |
 | `inspect_snapshot.py` | 查看当前快照或备份目录摘要（`--path <backup>` / `--json`） |
+| `review_queue.py` | 人工复核工作流：`stats` / `list`（status/entity-type/category/q） / `show <id>`（含原始候选与 wikitext 原文） / `resolve <id> --status wontfix --note "…"` / `export --format csv|json --out …`（不删除） |
 | `uv run uvicorn apps.api.main:app` | FastAPI 后端 |
 | `cd apps/web && npm run dev` | SvelteKit 前端 |
 

@@ -865,9 +865,10 @@ class CanonicalStore:
 
     def queue_review(self, entity_type: str, entity_id: int | None, reason: str, detail: Any) -> None:
         self.conn.execute(
-            """INSERT INTO manual_review_queue(entity_type, entity_id, reason, detail)
-               VALUES(?,?,?,?)""",
-            [entity_type, entity_id, reason, json.dumps(detail, ensure_ascii=False, default=str)],
+            """INSERT INTO manual_review_queue(entity_type, entity_id, reason, detail, run_id)
+               VALUES(?,?,?,?,?)""",
+            [entity_type, entity_id, reason, json.dumps(detail, ensure_ascii=False, default=str),
+             self.run_id],
         )
 
     # ---- finalize -----------------------------------------------------------
