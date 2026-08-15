@@ -65,8 +65,8 @@ test('clicking a next evolution opens its detail page', async ({ page }) => {
 
 test('combined filter: 究极体 + 疫苗', async ({ page }) => {
 	await page.goto('/');
-	// level tab: 究极体
-	await page.getByRole('tab', { name: '究极体' }).click();
+	// level tab: 究极体 (exact — the real tab list also has 超究极体)
+	await page.getByRole('tab', { name: '究极体', exact: true }).click();
 	// attribute filter
 	await page.locator('select').first().selectOption('vaccine');
 	await expect(page.locator('[data-testid="digimon-card"]').first()).toBeVisible();
@@ -84,6 +84,24 @@ test('favorites persist across reload', async ({ page }) => {
 	await expect(favBtn).toContainText('★');
 	await page.reload();
 	await expect(page.locator('.detail-art .fav')).toContainText('★');
+});
+
+test('favorites page lists saved favorites and clears', async ({ page }) => {
+	// nothing saved yet -> empty state with a CTA back to the index
+	await page.goto('/favorites');
+	await expect(page.getByText('还没有收藏任何数码兽')).toBeVisible();
+
+	// favorite Agumon from its detail page, then the favorites page shows it
+	await page.goto('/digimon/agumon');
+	await page.locator('.detail-art .fav').click();
+	await page.goto('/favorites');
+	await expect(page.locator('[data-testid="digimon-card"]').first()).toBeVisible();
+	const href = await page.locator('[data-testid="digimon-card"] a.card-link').first().getAttribute('href');
+	expect(href).toBe('/digimon/agumon');
+
+	// unfavorite from the card -> empty state returns
+	await page.locator('[data-testid="digimon-card"] .fav').click();
+	await expect(page.getByText('还没有收藏任何数码兽')).toBeVisible();
 });
 
 test('missing image shows placeholder, not broken image', async ({ page }) => {

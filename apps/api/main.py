@@ -196,6 +196,25 @@ def list_digimon(
         conn.close()
 
 
+@app.get("/api/digimon/by-id")
+def digimon_by_ids(ids: str = Query(..., description="comma-separated digimon ids")) -> dict[str, Any]:
+    """List items for a specific set of ids (UI favorites page, S0/S1).
+
+    Returns only ids that exist, in the requested order. Keeps the favorites
+    page from fetching full details for a whole list (UI-P0-1). Registered
+    before ``/api/digimon/{ident}`` so ``by-id`` is not captured as an ident.
+    """
+    id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+    conn = _db()
+    try:
+        items = queries.list_by_ids(conn, id_list[:500])
+        for it in items:
+            it["thumbnail"] = _thumb_servable(it)
+        return {"items": items}
+    finally:
+        conn.close()
+
+
 @app.get("/api/digimon/{ident}")
 def digimon_detail(ident: str) -> dict[str, Any]:
     conn = _db()

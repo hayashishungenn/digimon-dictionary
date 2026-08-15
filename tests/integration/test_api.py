@@ -101,6 +101,28 @@ def test_detail_404(client):
     assert client.get("/api/digimon/does-not-exist").status_code == 404
 
 
+def test_by_ids_returns_requested_order(client, fixture_db):
+    """The favorites endpoint returns list items in the requested id order,
+    drops ids that don't exist, and is never shadowed by /digimon/{ident}."""
+    _path, conn = fixture_db
+    ids = [r["id"] for r in conn.execute(
+        "SELECT id FROM digimon WHERE canonical_slug IN ('agumon','gabumon','wargreymon') ORDER BY id"
+    )]
+    # request in a non-id order to prove ordering follows the request
+    ordered = [ids[2], ids[0], ids[1]]
+    r = client.get("/api/digimon/by-id", params={"ids": ",".join(map(str, ordered))})
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert [i["id"] for i in items] == ordered
+    # nonexistent ids are dropped, not an error
+    r2 = client.get("/api/digimon/by-id", params={"ids": "99999,1"})
+    assert r2.status_code == 200
+    assert [i["id"] for i in r2.json()["items"]] == [1]
+    # "by-id" must not be captured by the /digimon/{ident} detail route
+    assert client.get("/api/digimon/by-id").status_code == 422  # missing query param
+    assert client.get("/api/digimon/by-id", params={"ids": "abc"}).json()["items"] == []
+
+
 def test_search_chinese(client):
     r = client.get("/api/search", params={"q": "亚古兽"})
     items = r.json()["items"]

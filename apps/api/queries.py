@@ -169,6 +169,23 @@ def count_digimon(
     return int(row[0]) if row else 0
 
 
+def list_by_ids(conn: sqlite3.Connection, ids: list[int]) -> list[dict[str, Any]]:
+    """List items for a specific set of digimon ids (used by the favorites page).
+
+    Only the ids that exist are returned; ordering follows the requested order
+    so the UI can present favorites in the order the user saved them.
+    """
+    if not ids:
+        return []
+    sql = (
+        f"SELECT {LIST_COLUMNS} FROM digimon d WHERE d.id IN "
+        f"({','.join('?' * len(ids))})"
+    )
+    rows = conn.execute(sql, list(ids)).fetchall()
+    by_id = {r["id"]: dict(r) for r in rows}
+    return [by_id[i] for i in ids if i in by_id]
+
+
 # --------------------------------------------------------------------------
 # detail
 # --------------------------------------------------------------------------

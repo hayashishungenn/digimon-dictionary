@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
+	import AppShell from '$lib/components/AppShell.svelte';
 
 	let { children } = $props();
 </script>
@@ -11,20 +12,4 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-<header class="site-header">
-	<div class="site-header-inner">
-		<a href="/" class="logo" aria-label="DigiDex 首页">
-			<span class="logo-glyph">◢</span>
-			<span>DigiDex</span>
-			<span class="logo-sub">数码宝贝全图鉴</span>
-		</a>
-		<nav class="nav-links" aria-label="主导航">
-			<a href="/">图鉴</a>
-			<a href="/about">关于</a>
-		</nav>
-	</div>
-</header>
-
-<main class="shell">
-	{@render children()}
-</main>
+<AppShell>{@render children()}</AppShell>

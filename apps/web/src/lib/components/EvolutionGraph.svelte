@@ -192,7 +192,7 @@
 	.n-cond {
 		display: block;
 		font-size: 10px;
-		color: var(--accent-2);
+		color: var(--accent);
 		margin-top: 1px;
 		line-height: 1.3;
 		max-width: 200px;

@@ -144,7 +144,7 @@
 		border-radius: var(--radius);
 		background:
 			radial-gradient(circle at 20% 10%, rgba(53, 208, 255, 0.05), transparent 40%),
-			radial-gradient(circle at 90% 90%, rgba(124, 92, 255, 0.05), transparent 40%);
+			radial-gradient(circle at 90% 90%, rgba(255, 200, 87, 0.05), transparent 40%);
 		user-select: none;
 	}
 	.evo-graph.dragging {

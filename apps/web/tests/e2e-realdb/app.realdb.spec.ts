@@ -52,7 +52,7 @@ test('trilingual + partial + alias search resolve to the same real entity', asyn
 
 test('combined filter: 究极体 + 疫苗 on the real dataset', async ({ page }) => {
 	await page.goto('/');
-	await page.getByRole('tab', { name: '究极体' }).click();
+	await page.getByRole('tab', { name: '究极体', exact: true }).click();
 	await page.locator('select').first().selectOption('vaccine');
 	const count = page.locator('.result-count');
 	await expect(count).toContainText('共 ');

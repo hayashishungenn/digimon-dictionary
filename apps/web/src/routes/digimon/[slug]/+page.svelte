@@ -125,6 +125,11 @@
 {:else if error}
 	<div class="error-box" role="alert">{error}</div>
 {:else if data}
+	<div class="breadcrumb" aria-label="面包屑">
+		<a href="/">首页</a><span class="sep">/</span>
+		<a href="/">图鉴</a><span class="sep">/</span>
+		<span class="cur mono">{data?.canonical_slug ?? slug}</span>
+	</div>
 	<div class="detail-hero">
 		<div class="detail-art">
 			<button
@@ -164,7 +169,7 @@
 			<div class="detail-badges">
 				<Badges level={data.level} attribute={data.attribute} />
 				{#if data.x_antibody}
-					<span class="badge" style="color:var(--accent-2);background:rgba(124,92,255,0.14)">X 抗体</span>
+					<span class="badge" style="color:var(--accent);background:rgba(53,208,255,0.14)">X 抗体</span>
 				{/if}
 				{#if data.is_official_reference}
 					<span class="badge" style="color:var(--green);background:rgba(94,242,160,0.12)">官方图鉴</span>
@@ -501,7 +506,7 @@
 	}
 	.n-rel {
 		font-size: 10.5px;
-		color: var(--accent-2);
+		color: var(--accent);
 		display: block;
 	}
 	.source-table {

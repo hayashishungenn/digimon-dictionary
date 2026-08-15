@@ -63,6 +63,7 @@ export const api = {
 	evolution: (ident: string, depth = 1) => get<EvolutionGraph>(`/digimon/${ident}/evolution?depth=${depth}`),
 	skills: (ident: string) => get<Skill[]>(`/digimon/${ident}/skills`),
 	group: (name: string) => get<GroupResponse>(`/groups/${encodeURIComponent(name)}`),
+	byIds: (ids: number[]) => get<{ items: DigimonListItem[] }>(`/digimon/by-id?ids=${ids.join(',')}`),
 	// Resolve an API-relative image path (e.g. "/api/images/agumon/thumbnail")
 	// to an absolute URL the browser can load.
 	imageUrl: (path: string | null | undefined): string | null => {

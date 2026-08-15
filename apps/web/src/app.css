@@ -12,17 +12,38 @@
 	--text: #e9edf7;
 	--text-dim: #98a2bb;
 	--text-faint: #66708c;
+	/* semantic aliases (UI-P0-1) */
+	--text-secondary: var(--text-dim);
+	--text-muted: var(--text-faint);
+	--text-disabled: #4a5270;
 	--accent: #35d0ff;
 	--accent-strong: #0ea5d0;
-	--accent-2: #7c5cff;
-	--gold: #ffc857;
-	--red: #ff5d73;
-	--green: #5ef2a0;
+	--accent-soft: rgba(53, 208, 255, 0.14);
+	--warning: #ffc857; /* amber — community / unverified / review */
+	--danger: #ff5d73; /* red — errors only */
+	--success: #5ef2a0;
+	--gold: #ffc857; /* legacy alias */
+	--red: #ff5d73; /* legacy alias */
+	--green: #5ef2a0; /* legacy alias */
 	--radius: 10px;
 	--radius-sm: 6px;
+	--radius-md: 10px;
+	--radius-lg: 14px;
+	--focus-ring: 0 0 0 2px var(--accent-soft), 0 0 0 3px var(--accent);
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-5: 20px;
+	--space-6: 24px;
+	--space-8: 32px;
+	--dur-fast: 120ms;
+	--dur-med: 180ms;
+	--dur-slow: 280ms;
+	--ease: cubic-bezier(0.2, 0, 0, 1);
+	--shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
 	--mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', Consolas, monospace;
 	--sans: 'Segoe UI', system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-	--shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
 }
 
 * {
@@ -72,19 +93,36 @@ button {
 	padding: 0 20px 80px;
 }
 
-.site-header {
+.skip-link {
+	position: fixed;
+	top: -60px;
+	left: 16px;
+	z-index: 100;
+	background: var(--surface-3);
+	color: var(--accent);
+	border: 1px solid var(--accent);
+	border-radius: var(--radius-sm);
+	padding: 8px 14px;
+	font-size: 13px;
+	transition: top var(--dur-fast) var(--ease);
+}
+.skip-link:focus-visible {
+	top: 12px;
+}
+
+.topbar {
 	position: sticky;
 	top: 0;
 	z-index: 40;
-	background: rgba(10, 14, 26, 0.82);
+	background: rgba(10, 14, 26, 0.86);
 	backdrop-filter: blur(10px);
 	border-bottom: 1px solid var(--border);
 }
 
-.site-header-inner {
+.topbar-inner {
 	max-width: 1480px;
 	margin: 0 auto;
-	padding: 12px 20px;
+	padding: 10px 20px;
 	display: flex;
 	align-items: center;
 	gap: 20px;
@@ -92,20 +130,23 @@ button {
 
 .logo {
 	display: flex;
-	align-items: baseline;
-	gap: 8px;
+	align-items: center;
+	gap: 9px;
 	font-weight: 800;
 	font-size: 20px;
 	letter-spacing: 0.5px;
 	color: var(--text);
 }
-
-.logo .logo-glyph {
-	color: var(--accent);
-	filter: drop-shadow(0 0 8px rgba(53, 208, 255, 0.55));
+.logo-mark {
+	display: grid;
+	place-items: center;
+	line-height: 0;
+	filter: drop-shadow(0 0 8px rgba(53, 208, 255, 0.45));
 }
-
-.logo .logo-sub {
+.logo-text {
+	letter-spacing: 1px;
+}
+.logo-sub {
 	font-family: var(--mono);
 	font-size: 10px;
 	font-weight: 500;
@@ -119,14 +160,148 @@ button {
 	gap: 16px;
 	margin-left: auto;
 	font-size: 13px;
+	align-items: center;
 }
 
 .nav-links a {
 	color: var(--text-dim);
+	padding: 4px 2px;
+	border-bottom: 2px solid transparent;
+	transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
 
 .nav-links a:hover {
 	color: var(--accent);
+	text-decoration: none;
+}
+
+.nav-links a:focus-visible {
+	outline-offset: 4px;
+}
+
+/* data status bar — runtime snapshot + counts, never hardcoded (UI-P0-1) */
+.statusbar {
+	border-bottom: 1px solid var(--border);
+	background: rgba(13, 18, 34, 0.6);
+}
+.statusbar-inner {
+	max-width: 1480px;
+	margin: 0 auto;
+	padding: 5px 20px;
+	display: flex;
+	align-items: center;
+	gap: 18px;
+	font-size: 11px;
+	color: var(--text-faint);
+	white-space: nowrap;
+	overflow-x: auto;
+}
+.st-strong {
+	color: var(--text);
+	font-weight: 600;
+}
+.st-ok {
+	color: var(--success);
+}
+.st-ext {
+	color: var(--warning);
+}
+.st-error {
+	color: var(--danger);
+}
+
+.site-footer {
+	border-top: 1px solid var(--border);
+	margin-top: 48px;
+	background: rgba(10, 14, 26, 0.5);
+}
+.footer-inner {
+	max-width: 1480px;
+	margin: 0 auto;
+	padding: 18px 20px 26px;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px 20px;
+	font-size: 12px;
+	color: var(--text-faint);
+	align-items: center;
+}
+.footer-inner .mono {
+	color: var(--text-dim);
+	letter-spacing: 2px;
+}
+
+.page-title {
+	margin: 24px 0 6px;
+	font-size: 26px;
+}
+
+.breadcrumb {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin: 14px 0 0;
+	font-family: var(--mono);
+	font-size: 11px;
+	color: var(--text-muted);
+	letter-spacing: 0.5px;
+}
+.breadcrumb a {
+	color: var(--text-muted);
+}
+.breadcrumb a:hover {
+	color: var(--accent);
+	text-decoration: none;
+}
+.breadcrumb .sep {
+	color: var(--text-disabled);
+}
+.breadcrumb .cur {
+	color: var(--text);
+}
+
+.section-header {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 12px;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 2px;
+	color: var(--text-faint);
+	font-family: var(--mono);
+	margin: 28px 0 10px;
+	padding-bottom: 6px;
+	border-bottom: 1px solid var(--border);
+}
+.sh-code {
+	color: var(--accent);
+	margin-right: 8px;
+}
+.sh-aside {
+	color: var(--text-muted);
+	font-size: 11px;
+	text-transform: none;
+	letter-spacing: 1px;
+}
+
+.empty-card {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 6px;
+	text-align: center;
+	background: var(--surface);
+	border: 1px dashed var(--border);
+	border-radius: var(--radius-lg);
+	padding: 40px 24px;
+	margin-top: 20px;
+}
+.empty-icon {
+	font-size: 40px;
+	color: var(--warning);
+	margin-bottom: 6px;
 }
 
 /* ---------- typography helpers ---------- */
@@ -365,8 +540,8 @@ button {
 	font-family: var(--mono);
 	font-size: 9px;
 	font-weight: 500;
-	color: var(--accent-2);
-	border: 1px solid rgba(124, 92, 255, 0.4);
+	color: var(--warning);
+	border: 1px solid rgba(255, 200, 87, 0.45);
 	border-radius: 4px;
 	padding: 0 4px;
 	vertical-align: 2px;
@@ -606,8 +781,15 @@ button {
 	.detail-hero {
 		grid-template-columns: 1fr;
 	}
-	.site-header-inner {
+	.topbar-inner {
 		flex-wrap: wrap;
+		row-gap: 6px;
+	}
+	.nav-links {
+		margin-left: 0;
+		width: 100%;
+		flex-wrap: wrap;
+		gap: 12px;
 	}
 }
 
@@ -656,4 +838,23 @@ button {
 	border-radius: var(--radius);
 	padding: 14px 18px;
 	margin: 20px 0;
+}
+
+/* ---------- reduced motion (UI-P1-2) ---------- */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+	.spinner {
+		animation: none !important;
+	}
+	.digimon-card:hover,
+	.evo-node:hover {
+		transform: none !important;
+	}
 }

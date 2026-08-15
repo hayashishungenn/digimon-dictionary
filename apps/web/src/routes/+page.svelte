@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { api, debounce, type ListFilters } from '$lib/api/client';
-	import type { Meta, DigimonListItem } from '$lib/api/types';
+	import type { DigimonListItem } from '$lib/api/types';
 	import DigimonCard from '$lib/components/DigimonCard.svelte';
+	import { ensureMeta, metaState } from '$lib/stores/meta.svelte';
 
-	let meta = $state<Meta | null>(null);
+	import { onMount } from 'svelte';
+
 	let items = $state<DigimonListItem[]>([]);
 	let total = $state(0);
 	let loading = $state(true);
@@ -26,18 +27,12 @@
 	// slow stale response can never overwrite a newer search/list result (T6.1).
 	let reqSeq = 0;
 
-	const LEVEL_TABS: Array<{ value: string | null; label: string }> = [
-		{ value: null, label: '全部' },
-		{ value: 'digi_egg', label: '数码蛋' },
-		{ value: 'baby_i', label: '幼年期Ⅰ' },
-		{ value: 'baby_ii', label: '幼年期Ⅱ' },
-		{ value: 'child', label: '成长期' },
-		{ value: 'adult', label: '成熟期' },
-		{ value: 'perfect', label: '完全体' },
-		{ value: 'ultimate', label: '究极体' },
-		{ value: 'armor', label: '装甲体' },
-		{ value: 'hybrid', label: '混合体' }
-	];
+	// level tabs come from the API meta (never hardcoded, so a new level enum
+	// value shows up without a code change — UI-P0-1/UI-P0-2).
+	let levelTabs = $derived([
+		{ value: null as string | null, label: '全部' },
+		...(metaState.meta?.levels ?? []).map((l) => ({ value: l.value, label: l.label_zh })),
+	]);
 
 	async function load() {
 		const my = ++reqSeq;
@@ -128,7 +123,7 @@
 	});
 
 	onMount(() => {
-		api.meta().then((m) => (meta = m)).catch(() => (meta = null));
+		ensureMeta();
 	});
 </script>
 
@@ -146,9 +141,9 @@
 <div class="hero">
 	<h1 class="hero-title">数码宝贝全图鉴</h1>
 	<p class="hero-sub">
-		三语言 Canonical 数据库 · {meta?.counts.total ?? '—'} 只收录
-		{#if meta}
-			<span class="faint">（官方 {meta.counts.official} · 扩展 {meta.counts.extended}）</span>
+		三语言 Canonical 数据库 · {metaState.meta?.counts.total ?? '—'} 只收录
+		{#if metaState.meta}
+			<span class="faint">（官方 {metaState.meta.counts.official} · 扩展 {metaState.meta.counts.extended}）</span>
 		{/if}
 	</p>
 
@@ -182,7 +177,7 @@
 	</div>
 
 	<div class="chips level-tabs" role="tablist" aria-label="等级筛选">
-		{#each LEVEL_TABS as tab}
+		{#each levelTabs as tab}
 			<button
 				class="chip {level === tab.value ? 'active' : ''}"
 				role="tab"
@@ -201,7 +196,7 @@
 			<span class="f-label">属性</span>
 			<select class="select" value={attribute ?? ''} onchange={(e) => (attribute = (e.target as HTMLSelectElement).value || null)}>
 				<option value="">全部</option>
-				{#each meta?.attributes ?? [] as a}
+				{#each metaState.meta?.attributes ?? [] as a}
 					<option value={a.value}>{a.label_zh} / {a.label_en}</option>
 				{/each}
 			</select>
@@ -211,7 +206,7 @@
 			<span class="f-label">类型</span>
 			<select class="select" value={typeName ?? ''} onchange={(e) => (typeName = (e.target as HTMLSelectElement).value || null)}>
 				<option value="">全部</option>
-				{#each meta?.types ?? [] as t}
+				{#each metaState.meta?.types ?? [] as t}
 					<option value={t.name}>{t.name}</option>
 				{/each}
 			</select>
@@ -221,7 +216,7 @@
 			<span class="f-label">适应领域</span>
 			<select class="select" value={field ?? ''} onchange={(e) => (field = (e.target as HTMLSelectElement).value || null)}>
 				<option value="">全部</option>
-				{#each meta?.fields ?? [] as f}
+				{#each metaState.meta?.fields ?? [] as f}
 					<option value={f.name}>{f.name}</option>
 				{/each}
 			</select>
@@ -231,7 +226,7 @@
 			<span class="f-label">所属组织</span>
 			<select class="select" value={group ?? ''} onchange={(e) => (group = (e.target as HTMLSelectElement).value || null)}>
 				<option value="">全部</option>
-				{#each meta?.groups ?? [] as g}
+				{#each metaState.meta?.groups ?? [] as g}
 					<option value={g.name}>{g.name_zh ? `${g.name_zh} · ${g.name}` : g.name}</option>
 				{/each}
 			</select>
