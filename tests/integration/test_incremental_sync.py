@@ -188,3 +188,108 @@ def test_save_load_records_roundtrip():
         assert list(back.types) == list(rec.types)
         assert [s.names for s in back.skills] == [s.names for s in rec.skills]
         assert back.extra == rec.extra
+
+# ---------------------------------------------------------------------------
+# P1-1: per-run source_sync history + sync_run
+# ---------------------------------------------------------------------------
+def test_source_sync_preserves_run_history(env_db, tmp_path):
+    """Each sync run appends source_sync rows (keyed by source+run_id) instead
+    of overwriting, and a sync_run row records the run-level metadata."""
+    loader1 = make_loader({"dapi": (RECORDS, None)})
+    assert sync_data.run(["--sources", "dapi"], loader=loader1,
+                         reports_dir=tmp_path / "reports") == 0
+
+    changed = [
+        _mk("agumon", "Agumon", "アグモン", "亚古兽", dapi_id=1, skills=["New Skill"]),
+        _mk("greymon", "Greymon", "グレイモン", "暴龙兽", dapi_id=3),
+    ]
+    loader2 = make_loader({"dapi": (changed, None)})
+    assert sync_data.run(["--sources", "dapi"], loader=loader2,
+                         reports_dir=tmp_path / "reports") == 0
+
+    conn = connect(env_db)
+    rows = conn.execute(
+        "SELECT run_id, source, status, payload_hash FROM source_sync ORDER BY run_id"
+    ).fetchall()
+    conn.close()
+    assert len(rows) == 2  # one row per source per run — history, not overwrite
+    run_ids = {r["run_id"] for r in rows}
+    assert len(run_ids) == 2  # two distinct runs
+    assert all(r["status"] == "ok" for r in rows)
+
+    conn = connect(env_db)
+    runs = conn.execute("SELECT run_id, status, sources FROM sync_run ORDER BY run_id").fetchall()
+    conn.close()
+    assert len(runs) == 2
+    assert {r["status"] for r in runs} == {"ok"}
+    assert all("dapi" in (r["sources"] or "") for r in runs)
+
+
+def test_added_source_is_detected_and_allowed(env_db, tmp_path):
+    """Adding a source to a previously-synced database is identified and allowed
+    (additive), unlike dropping one which is refused."""
+    loader1 = make_loader({"dapi": (RECORDS, None)})
+    assert sync_data.run(["--sources", "dapi"], loader=loader1,
+                         reports_dir=tmp_path / "reports") == 0
+
+    loader2 = make_loader({"dapi": (RECORDS, None), "digimons_net": ([], None)})
+    # adding digimons_net must not be refused
+    assert sync_data.run(["--sources", "dapi,digimons_net"], loader=loader2,
+                         reports_dir=tmp_path / "reports") == 0
+    conn = connect(env_db)
+    runs = conn.execute("SELECT sources, note FROM sync_run ORDER BY run_id DESC LIMIT 1").fetchone()
+    conn.close()
+    assert "dapi" in runs["sources"] and "digimons_net" in runs["sources"]
+
+
+def test_validator_ignores_historical_failed_run(env_db, tmp_path):
+    """A historical failed run must not fail the current database: the validator
+    only inspects the LATEST run's per-source status (P1-1)."""
+    # simulate a legacy DB that carries an old failed run
+    conn = connect(env_db)
+    conn.execute("INSERT INTO sync_run(run_id, status, sources) VALUES('old-failed','failed','official')")
+    conn.execute(
+        "INSERT INTO source_sync(source, run_id, status, error_summary) "
+        "VALUES('official','old-failed','failed','legacy outage')"
+    )
+    conn.commit()
+    conn.close()
+
+    # a clean run publishes a new run; the historical rows are preserved
+    loader = make_loader({"dapi": (RECORDS, None)})
+    assert sync_data.run(["--sources", "dapi"], loader=loader,
+                         reports_dir=tmp_path / "reports") == 0
+
+    import pipeline.validation.validator as validator
+
+    conn = connect(env_db)
+    report = validator.validate(conn)
+    conn.close()
+    assert report["issue_counts"]["error"] == 0
+    # the failed historical row is still queryable (history preserved)
+    conn = connect(env_db)
+    failed_rows = conn.execute(
+        "SELECT source FROM source_sync WHERE status='failed'"
+    ).fetchall()
+    conn.close()
+    assert any(r["source"] == "official" for r in failed_rows)
+
+
+def test_raw_records_written_atomically(tmp_path, monkeypatch):
+    """save_records writes atomically: valid JSON, no .tmp leftovers (P1-1)."""
+    import pipeline.sources.base as base
+
+    raw_root = tmp_path / "raw"
+    monkeypatch.setattr(base, "RAW_SOURCES", {"dapi": raw_root / "dapi"})
+    base.save_records("dapi", RECORDS)
+    path = raw_root / "dapi" / "records.json"
+    assert path.exists()
+    # no temp files left behind
+    assert not list((raw_root / "dapi").glob("*.tmp"))
+    import json as _json
+
+    data = _json.loads(path.read_text("utf-8"))
+    assert len(data) == len(RECORDS)
+    # meta written
+    meta = _json.loads((raw_root / "dapi" / "records.meta.json").read_text("utf-8"))
+    assert meta["count"] == len(RECORDS)

@@ -34,6 +34,8 @@ EXPECTED_TABLES = {
     "game_skill",
     "snapshot",
     "source_sync",
+    "sync_run",
+    "field_coverage",
     "digimon_fts",
 }
 

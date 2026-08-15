@@ -222,15 +222,27 @@ def validate(conn: sqlite3.Connection) -> dict[str, Any]:
         issue("warning", "missing_provenance", f"{missing_prov} digimon have no provenance row")
 
     # --- source sync status ----------------------------------------------------
-    failed_syncs = conn.execute(
-        "SELECT source FROM source_sync WHERE status = 'failed'"
-    ).fetchall()
-    if failed_syncs:
-        issue("error", "source_sync_failed",
-              f"source sync failed for: {', '.join(r['source'] for r in failed_syncs)}")
-    if conn.execute("SELECT COUNT(*) FROM source_sync").fetchone()[0] == 0:
+    # source_sync keeps per-run history (P1-1): only the LATEST run's per-source
+    # status is the current publish signal; historical runs stay queryable but
+    # do not fail the current database.
+    n_sync = conn.execute("SELECT COUNT(*) FROM source_sync").fetchone()[0]
+    if n_sync == 0:
         issue("warning", "source_sync_missing",
               "source_sync table is empty — no per-source sync tracking recorded")
+    else:
+        latest_run = conn.execute(
+            "SELECT run_id FROM source_sync "
+            "WHERE finished_at IS NOT NULL ORDER BY finished_at DESC LIMIT 1"
+        ).fetchone()
+        if latest_run:
+            failed_syncs = conn.execute(
+                "SELECT source FROM source_sync WHERE run_id = ? AND status = 'failed'",
+                [latest_run["run_id"]],
+            ).fetchall()
+            if failed_syncs:
+                issue("error", "source_sync_failed",
+                      f"source sync failed in the latest run for: "
+                      f"{', '.join(r['source'] for r in failed_syncs)}")
 
     # --- FTS index vs digimon table -------------------------------------------
     fts_n = conn.execute("SELECT COUNT(*) FROM digimon_fts").fetchone()[0]

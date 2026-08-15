@@ -22,7 +22,7 @@ from pathlib import Path
 # the DB's `PRAGMA user_version`. Migrations are additive and never drop or
 # destroy data — an old DB is upgraded in place, so existing rows survive.
 # ---------------------------------------------------------------------------
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def _migrate_v1(conn: sqlite3.Connection) -> None:
@@ -143,12 +143,68 @@ def _migrate_v5(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE digimon_image ADD COLUMN failure_reason TEXT")
 
 
+def _migrate_v6(conn: sqlite3.Connection) -> None:
+    """v5 -> v6: per-run source_sync history + sync_run table (P1-1).
+
+    source_sync is keyed by (source, run_id) so every run's per-source status
+    is preserved (it was previously keyed by source alone, which overwrote
+    history on each run). A `sync_run` table records run-level metadata
+    (sources, status, note, snapshot date) so a specific version can be
+    reconstructed and audited.
+    """
+    cols = conn.execute("PRAGMA table_info(source_sync)").fetchall()
+    pk_cols = [r[1] for r in cols if r[5] > 0]  # PK-flagged columns
+    if pk_cols == ["source"]:  # old single-source PK -> rebuild with (source, run_id)
+        conn.execute("ALTER TABLE source_sync RENAME TO source_sync_old")
+        conn.execute(
+            """CREATE TABLE source_sync (
+                source             TEXT    NOT NULL,
+                run_id             TEXT    NOT NULL,
+                source_updated_at  TEXT,
+                last_seen_at       TEXT,
+                started_at         TEXT,
+                finished_at        TEXT,
+                status             TEXT,   -- ok|unchanged|failed
+                records            INTEGER,
+                parsed_count       INTEGER,
+                failed_count       INTEGER,
+                raw_completeness   INTEGER,
+                content_hash       TEXT,
+                payload_hash       TEXT,
+                error_summary      TEXT,
+                PRIMARY KEY (source, run_id)
+            )"""
+        )
+        conn.execute(
+            """INSERT INTO source_sync(source, run_id, source_updated_at, last_seen_at,
+               started_at, finished_at, status, records, parsed_count, failed_count,
+               raw_completeness, content_hash, payload_hash, error_summary)
+               SELECT source, run_id, source_updated_at, last_seen_at, started_at,
+               finished_at, status, records, parsed_count, failed_count,
+               raw_completeness, content_hash, payload_hash, error_summary
+               FROM source_sync_old"""
+        )
+        conn.execute("DROP TABLE source_sync_old")
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS sync_run (
+            run_id        TEXT PRIMARY KEY,
+            started_at    TEXT,
+            finished_at   TEXT,
+            status        TEXT,      -- ok|partial|failed
+            sources       TEXT,      -- comma-separated source set for this run
+            note          TEXT,
+            snapshot_date TEXT
+        )"""
+    )
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_v1,
     2: _migrate_v2,
     3: _migrate_v3,
     4: _migrate_v4,
     5: _migrate_v5,
+    6: _migrate_v6,
 }
 
 
@@ -474,8 +530,8 @@ SCHEMA_DDL: list[str] = [
         notes               TEXT
     );
     CREATE TABLE IF NOT EXISTS source_sync (
-        source             TEXT PRIMARY KEY,   -- dapi|wikimon|official|digimons_net|digidb|manual
-        run_id             TEXT,               -- sync run this row belongs to
+        source             TEXT NOT NULL,      -- dapi|wikimon|official|digimons_net|digidb|manual
+        run_id             TEXT NOT NULL,      -- sync run this row belongs to (P1-1: history)
         source_updated_at  TEXT,
         last_seen_at       TEXT,
         started_at         TEXT,
@@ -487,7 +543,17 @@ SCHEMA_DDL: list[str] = [
         raw_completeness   INTEGER,            -- 1 when pagination/details fully fetched
         content_hash       TEXT,               -- legacy incremental marker
         payload_hash       TEXT,               -- hash of the full normalized payload
-        error_summary      TEXT
+        error_summary      TEXT,
+        PRIMARY KEY (source, run_id)
+    );
+    CREATE TABLE IF NOT EXISTS sync_run (
+        run_id        TEXT PRIMARY KEY,
+        started_at    TEXT,
+        finished_at   TEXT,
+        status        TEXT,                    -- ok|partial|failed
+        sources       TEXT,                    -- comma-separated source set for this run
+        note          TEXT,
+        snapshot_date TEXT
     );
     """,
     # ---- FTS5 search index ------------------------------------------------
@@ -539,17 +605,25 @@ def connect_readonly(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
-def checkpoint_and_close(conn: sqlite3.Connection) -> None:
+def checkpoint_and_close(conn: sqlite3.Connection) -> bool:
     """Fold any WAL content into the main DB file and close the connection.
 
     Used before an atomic replace so the .sqlite file alone is complete and
-    self-contained (the WAL/SHM sidecar files become removable).
+    self-contained (the WAL/SHM sidecar files become removable). Returns True
+    when the main file is self-contained; False when the checkpoint failed
+    (caller must NOT publish, or the replaced file could silently lack WAL
+    content — P1-1).
     """
     try:
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     except sqlite3.Error:
-        pass  # not a WAL database (or already checkpointed); the file is still valid
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
+        return False
     conn.close()
+    return True
 
 
 def cleanup_db_files(path: str | Path) -> None:

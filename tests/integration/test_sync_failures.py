@@ -266,3 +266,43 @@ def test_skip_validation_never_publishes(env_db, tmp_path):
     # candidate kept for inspection, sidecars cleaned
     assert (tmp_path / "digidex.candidate.sqlite").exists()
     assert candidate_sidecars(tmp_path) == []
+
+
+# ---------------------------------------------------------------------------
+# P1-1: image-stage failure + checkpoint + history checks
+# ---------------------------------------------------------------------------
+def test_image_stage_failure_returns_nonzero(env_db, tmp_path, monkeypatch):
+    """--images runs after a successful publish; an image-stage failure makes
+    the run exit non-zero so the incomplete cache is never a silent success."""
+    import scripts.download_images as dl
+
+    monkeypatch.setattr(dl, "download_all", lambda db_path: (0, 0, 3))  # 3 failures
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    rc = sync_data.run(["--sources", "dapi", "--images"], loader=loader,
+                       reports_dir=tmp_path / "reports")
+    assert rc != 0
+    # the DB itself was published (canonical data is valid)
+    assert digimon_count(env_db) == len(SUCCESS_RECORDS)
+
+
+def test_image_stage_clean_returns_zero(env_db, tmp_path, monkeypatch):
+    import scripts.download_images as dl
+
+    monkeypatch.setattr(dl, "download_all", lambda db_path: (2, 0, 0))
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    rc = sync_data.run(["--sources", "dapi", "--images"], loader=loader,
+                       reports_dir=tmp_path / "reports")
+    assert rc == 0
+    assert digimon_count(env_db) == len(SUCCESS_RECORDS)
+
+
+def test_successful_run_writes_sync_run_row(env_db, tmp_path):
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    assert sync_data.run(["--sources", "dapi"], loader=loader,
+                         reports_dir=tmp_path / "reports") == 0
+    conn = connect(env_db)
+    run = conn.execute("SELECT run_id, status, sources FROM sync_run ORDER BY run_id DESC LIMIT 1").fetchone()
+    conn.close()
+    assert run is not None
+    assert run["status"] == "ok"
+    assert run["sources"] == "dapi"

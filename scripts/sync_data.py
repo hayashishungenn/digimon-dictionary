@@ -255,14 +255,27 @@ def _load_from_raw(sources: list[str]) -> tuple[dict[str, list], dict[str, Excep
 def _write_source_sync(conn: sqlite3.Connection, run_id: str,
                        records_by_source: dict[str, list],
                        source_stats: dict[str, dict],
-                       failures: dict[str, Exception]) -> None:
-    """Record every source's real status for this run in the `source_sync` table."""
+                       failures: dict[str, Exception],
+                       *, partial: bool = False, note: str | None = None) -> None:
+    """Record every source's real status for this run, preserving history (P1-1).
+
+    source_sync is keyed by (source, run_id), so each run appends new rows
+    instead of overwriting — a specific version can be reconstructed and
+    audited. A `sync_run` row carries the run-level metadata.
+    """
     finished = _now()
+    run_status = "failed" if failures else ("partial" if partial else "ok")
+    conn.execute(
+        """INSERT OR REPLACE INTO sync_run(run_id, started_at, finished_at, status, sources, note, snapshot_date)
+           VALUES(?,?,?,?,?,?,?)""",
+        [run_id, None, finished, run_status,
+         ",".join(sorted(set(records_by_source) | set(failures))), note, _now()[:10]],
+    )
     for name, records in records_by_source.items():
         st = source_stats.get(name, {})
         digest = st.get("payload_hash") or _records_hash(records)
         conn.execute(
-            """INSERT OR REPLACE INTO source_sync
+            """INSERT INTO source_sync
                (source, run_id, last_seen_at, started_at, finished_at, status,
                 records, parsed_count, failed_count, raw_completeness,
                 content_hash, payload_hash, error_summary)
@@ -274,7 +287,7 @@ def _write_source_sync(conn: sqlite3.Connection, run_id: str,
     for name, exc in failures.items():
         st = source_stats.get(name, {})
         conn.execute(
-            """INSERT OR REPLACE INTO source_sync
+            """INSERT INTO source_sync
                (source, run_id, started_at, finished_at, status,
                 records, parsed_count, failed_count, raw_completeness,
                 content_hash, payload_hash, error_summary)
@@ -387,8 +400,10 @@ def _build_db(conn: sqlite3.Connection, records_by_source: dict[str, list],
     logger.info("snapshot: %s", snap)
     conn.commit()
 
-    # per-source sync status is queryable in the candidate (T4.1)
-    _write_source_sync(conn, run_id or "?", records_by_source, source_stats or {}, failures or {})
+    # per-source sync status is queryable in the candidate (T4.1); history is
+    # preserved per (source, run_id) with a sync_run row (P1-1)
+    _write_source_sync(conn, run_id or "?", records_by_source, source_stats or {},
+                       failures or {}, partial=partial, note=f"build of sources={sources}")
 
 
 def _preserve_review_history(db_path: Path, conn: sqlite3.Connection) -> None:
@@ -422,6 +437,47 @@ def _preserve_review_history(db_path: Path, conn: sqlite3.Connection) -> None:
         if copied:
             conn.commit()
             logger.info("preserved %d resolved/wontfix review items", copied)
+    finally:
+        old.close()
+
+
+def _preserve_sync_history(db_path: Path, conn: sqlite3.Connection) -> None:
+    """Carry previous runs' source_sync/sync_run rows into the candidate (P1-1).
+
+    The candidate is rebuilt from scratch each run, so without this every
+    publish would start with an empty source_sync — the per-run history would
+    never accumulate. Historical rows are immutable facts and are copied
+    verbatim; the current run appends its own rows on top.
+    """
+    if not db_path.exists():
+        return
+    try:
+        old = connect_readonly(db_path)
+    except sqlite3.Error:
+        return
+    try:
+        old_tables = {
+            r[0] for r in old.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        for table, cols in (
+            ("source_sync", ["source", "run_id", "source_updated_at", "last_seen_at",
+                             "started_at", "finished_at", "status", "records",
+                             "parsed_count", "failed_count", "raw_completeness",
+                             "content_hash", "payload_hash", "error_summary"]),
+            ("sync_run", ["run_id", "started_at", "finished_at", "status",
+                          "sources", "note", "snapshot_date"]),
+        ):
+            if table not in old_tables:
+                continue  # an older DB predates this table
+            rows = old.execute(f"SELECT {','.join(cols)} FROM {table}").fetchall()
+            if not rows:
+                continue
+            ph = ",".join("?" * len(cols))
+            conn.executemany(
+                f"INSERT OR IGNORE INTO {table}({','.join(cols)}) VALUES({ph})",
+                [tuple(r[c] for c in cols) for r in rows],
+            )
+        conn.commit()
     finally:
         old.close()
 
@@ -509,7 +565,7 @@ def run(argv: list[str] | None = None, *, loader=None, reports_dir: Path | None 
     if args.force and not _clear_http_cache(cache_dir, db_path.parent):
         return 1
 
-    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + f"-{os.getpid():x}"
+    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f") + f"-{os.getpid():x}"
     # only persist raw snapshots for the real loader (tests inject fake adapters)
     persist_raw = loader is None
     try:
@@ -530,15 +586,24 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
     existing = _count_existing(db_path)
     prev_sources = state.get("sync_data").get("sources", [])
     dropped = [s for s in prev_sources if s not in sources]
-    if existing > 0 and dropped and not args.partial_ok:
-        logger.error(
-            "Database has %d digimon and was last synced with sources %s; "
-            "this run drops %s, which would wipe their derived data. "
-            "Re-run including them, or pass --partial-ok to build a partial "
-            "candidate (still not published without --publish-partial).",
-            existing, prev_sources, dropped,
-        )
-        return 1
+    added = [s for s in sources if s not in prev_sources]
+    if existing > 0 and (added or dropped):
+        # source-set change detection (P1-1): added AND removed sources are
+        # both identified. Adding is safe (additive); dropping is refused
+        # unless the user explicitly builds a partial candidate.
+        if added:
+            logger.info("source set change: adding %s (previous run used %s)", added, prev_sources)
+        if dropped and not args.partial_ok:
+            logger.error(
+                "Database has %d digimon and was last synced with sources %s; "
+                "this run drops %s, which would wipe their derived data. "
+                "Re-run including them, or pass --partial-ok to build a partial "
+                "candidate (still not published without --publish-partial).",
+                existing, prev_sources, dropped,
+            )
+            return 1
+        if dropped:
+            logger.warning("source set change: dropping %s — building a partial candidate", dropped)
 
     cleanup_db_files(candidate)  # remove any stale candidate from a prior run
     conn: sqlite3.Connection | None = None
@@ -617,6 +682,8 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
 
         # preserve resolved/wontfix review history into the candidate first
         _preserve_review_history(db_path, conn)
+        # preserve previous runs' source_sync/sync_run history (P1-1)
+        _preserve_sync_history(db_path, conn)
 
         # Partial (source-subset) run: build + report but do NOT publish by
         # default. Publishing a partial snapshot requires an explicit override.
@@ -633,8 +700,14 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
             return 0
 
         # Publish: checkpoint WAL into the main file, close all connections,
-        # then atomically replace the live DB.
-        checkpoint_and_close(conn)
+        # then atomically replace the live DB. A failed checkpoint means the
+        # candidate file may silently lack WAL content — never publish it (P1-1).
+        if not checkpoint_and_close(conn):
+            logger.error(
+                "WAL checkpoint failed; candidate NOT published (live DB unchanged)"
+            )
+            conn = None
+            return 1
         conn = None
         _publish(candidate, db_path)
 
@@ -642,11 +715,29 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
         state.save()
         logger.info("snapshot published to %s", db_path)
 
-        # optional images (only after a successful publish)
+        # optional images (only after a successful publish). The DB is already
+        # published (valid canonical data); an image-stage failure is reported
+        # and the run exits non-zero so the incomplete image cache is never
+        # mistaken for a fully-clean sync (P1-1).
         if args.images:
-            from scripts.download_images import download_all
+            from scripts.download_images import backfill_metadata, download_all, ensure_thumbnails
 
-            download_all(db_path)
+            done, refused, failed = download_all(db_path)
+            conn = connect(db_path)
+            try:
+                backfill_metadata(conn)
+                derived, thumb_failed = ensure_thumbnails(conn, force=args.force)
+            finally:
+                conn.close()
+            logger.info("image stage: %d images, %d thumbnails derived, %d refused by policy",
+                        done, derived, refused)
+            if failed or thumb_failed:
+                logger.error(
+                    "image stage had %d download / %d thumbnail failures; DB published "
+                    "but image cache incomplete — re-run scripts/download_images.py",
+                    failed, thumb_failed,
+                )
+                return 1
         return 0
     except KeyboardInterrupt:
         logger.error("interrupted; official database unchanged")
