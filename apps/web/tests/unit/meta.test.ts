@@ -12,11 +12,20 @@ const META = {
 	groups: []
 };
 
-vi.mock('$lib/api/client', () => ({
-	api: {
-		meta: vi.fn()
+vi.mock('$lib/api/client', () => {
+	class ApiError extends Error {
+		constructor(public status: number, message: string) {
+			super(message);
+			this.name = 'ApiError';
+		}
 	}
-}));
+	return {
+		api: {
+			meta: vi.fn()
+		},
+		ApiError
+	};
+});
 
 async function loadStore() {
 	vi.resetModules();
@@ -52,5 +61,17 @@ describe('meta store (shared dataset status)', () => {
 		await vi.waitFor(() => expect(store.metaState.loading).toBe(false));
 		expect(store.metaState.error).toBe('down');
 		expect(store.metaState.meta).toBeNull();
+		expect(store.metaState.dbUnavailable).toBe(false);
+	});
+
+	it('marks dbUnavailable on a 503 (DB not synced)', async () => {
+		const client = await import('$lib/api/client');
+		const { ApiError } = client;
+		(client.api.meta as ReturnType<typeof vi.fn>).mockRejectedValue(new ApiError(503, 'Dataset not synced yet'));
+
+		const store = await loadStore();
+		store.ensureMeta();
+		await vi.waitFor(() => expect(store.metaState.loading).toBe(false));
+		expect(store.metaState.dbUnavailable).toBe(true);
 	});
 });

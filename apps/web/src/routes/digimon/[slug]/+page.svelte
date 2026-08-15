@@ -1,10 +1,12 @@
 <script lang="ts">
-	import { api } from '$lib/api/client';
+	import { api, userMessage } from '$lib/api/client';
 	import type { DigimonDetail } from '$lib/api/types';
 	import PlaceholderImage from '$lib/components/PlaceholderImage.svelte';
 	import Badges, { levelLabel, attrLabel } from '$lib/components/Badges.svelte';
 	import EvolutionGraph from '$lib/components/EvolutionGraph.svelte';
 	import SectionHeader from '$lib/components/SectionHeader.svelte';
+	import ErrorState from '$lib/components/ErrorState.svelte';
+	import SkeletonGrid from '$lib/components/SkeletonGrid.svelte';
 	import { isFavorite, toggleFavorite } from '$lib/stores/favorites.svelte';
 
 	let { params } = $props();
@@ -35,7 +37,7 @@
 			evoError = null;
 		} catch (e) {
 			if (my !== reqSeq) return;
-			error = e instanceof Error ? e.message : '加载失败';
+			error = userMessage(e, '加载失败');
 		} finally {
 			if (my === reqSeq) loading = false;
 		}
@@ -122,9 +124,9 @@
 </svelte:head>
 
 {#if loading}
-	<div class="spinner" aria-label="加载中"></div>
+	<SkeletonGrid count={1} />
 {:else if error}
-	<div class="error-box" role="alert">{error}</div>
+	<ErrorState message={error} retry={load} />
 {:else if data}
 	<div class="breadcrumb" aria-label="面包屑">
 		<a href="/">首页</a><span class="sep">/</span>

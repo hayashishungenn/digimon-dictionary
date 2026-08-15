@@ -32,6 +32,19 @@ export class ApiError extends Error {
 	}
 }
 
+// Map a thrown error to a safe, user-facing message (never a raw stack/SQL/
+// path). Network failure and server errors get friendly text (UI-P1-1).
+export function userMessage(e: unknown, fallback: string): string {
+	if (e instanceof ApiError) {
+		if (e.status === 404) return '没有找到该条目（可能已被移除）。';
+		if (e.status === 503) return '数据服务尚未同步。请先运行 sync-data 再访问。';
+		if (e.status >= 500) return '数据服务暂时不可用，请稍后重试。';
+		return fallback;
+	}
+	if (e instanceof TypeError) return '无法连接数据服务，请确认后端已启动。';
+	return fallback;
+}
+
 export interface ListFilters {
 	level?: string | null;
 	attribute?: string | null;

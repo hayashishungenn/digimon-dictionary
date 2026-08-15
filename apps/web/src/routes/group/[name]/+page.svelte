@@ -2,6 +2,9 @@
 	import { api } from '$lib/api/client';
 	import type { GroupResponse } from '$lib/api/types';
 	import DigimonCard from '$lib/components/DigimonCard.svelte';
+	import ErrorState from '$lib/components/ErrorState.svelte';
+	import EmptyState from '$lib/components/EmptyState.svelte';
+	import SkeletonGrid from '$lib/components/SkeletonGrid.svelte';
 
 	let { params } = $props();
 	let name = $derived(decodeURIComponent(params.name));
@@ -39,9 +42,9 @@
 </svelte:head>
 
 {#if loading}
-	<div class="spinner" aria-label="加载中"></div>
+	<SkeletonGrid count={12} />
 {:else if error}
-	<div class="error-box">{error}</div>
+	<ErrorState message="加载组织失败" retry={() => load(name)} />
 {:else if data}
 	<div class="breadcrumb" aria-label="面包屑">
 		<a href="/">首页</a><span class="sep">/</span>
@@ -50,9 +53,13 @@
 	</div>
 	<h1 class="group-title">所属组织：{name}</h1>
 	<p class="dim">成员 {data.count} 只</p>
-	<div class="grid">
-		{#each data.members as m}
-			<DigimonCard item={m} />
-		{/each}
-	</div>
+	{#if data.members.length > 0}
+		<div class="grid">
+			{#each data.members as m}
+				<DigimonCard item={m} />
+			{/each}
+		</div>
+	{:else}
+		<EmptyState title="该组织暂无成员记录" message="没有可展示的数据。" />
+	{/if}
 {/if}

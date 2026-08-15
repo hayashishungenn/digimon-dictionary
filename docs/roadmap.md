@@ -96,9 +96,12 @@
       replaceState 无历史噪音），刷新/深链恢复；导出 JSON 增加 `dataset` 摘要（schema/snapshot/
       官方/扩展/总数），CSV 增加 `name_zh_cn_status/name_zh_cn_source/profile_verified`；
       API 每次请求经 `sqlite3.Connection` 子类统计 SQL 数 + 耗时并记录日志（真实 DB 查询可观测）。
+- [x] **S1-4 本地维护体验**：`scripts/diagnose.py` 只读健康摘要（版本/DB/snapshot/计数/图片/最近同步/
+      发布 manifest，`--json`，绝不输出 Token/环境变量，测试覆盖）；`scripts/dev.ps1` 启动后端+前端并
+      打印 PID 与停止方式；pyproject 增加 backup/restore/inspect/review/diagnose 控制台别名；
+      README 新增本地维护章节。
 
 ### 待完成
 
-- [ ] S1-4 本地启动与维护体验（诊断脚本、PowerShell 启动脚本、README 核对）
 - [ ] UI-P1 / UI-P2（加载/空/错误状态系统、响应式与可访问性、图片性能、动效、个人收藏）
 - [ ] S2-1 个人注释标签收藏、S2-2 独立游戏技能接入

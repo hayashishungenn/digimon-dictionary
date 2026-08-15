@@ -2,6 +2,8 @@
 	import { api } from '$lib/api/client';
 	import type { DigimonListItem } from '$lib/api/types';
 	import DigimonCard from '$lib/components/DigimonCard.svelte';
+	import ErrorState from '$lib/components/ErrorState.svelte';
+	import SkeletonGrid from '$lib/components/SkeletonGrid.svelte';
 	import { favorites } from '$lib/stores/favorites.svelte';
 
 	let items = $state<DigimonListItem[]>([]);
@@ -41,7 +43,7 @@
 <p class="dim">个人收藏保存在本机浏览器（localStorage），不改变 canonical 数据，也不依赖登录或公网。</p>
 
 {#if error}
-	<div class="error-box" role="alert">{error}</div>
+	<ErrorState message={error} retry={load} />
 {:else if favorites.ids.length === 0}
 	<div class="empty-card">
 		<div class="empty-icon mono">☆</div>
@@ -50,7 +52,7 @@
 		<a class="btn btn-primary" href="/">前往图鉴</a>
 	</div>
 {:else if loading && items.length === 0}
-	<div class="spinner" aria-label="加载中"></div>
+	<SkeletonGrid count={Math.min(6, favorites.ids.length)} />
 {:else}
 	<div class="result-count mono">共 {favorites.ids.length} 只收藏</div>
 	{#if items.length > 0}

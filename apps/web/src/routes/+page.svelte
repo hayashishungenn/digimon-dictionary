@@ -1,8 +1,11 @@
 <script lang="ts">
-	import { api, debounce, type ListFilters } from '$lib/api/client';
+	import { api, debounce, userMessage, type ListFilters } from '$lib/api/client';
 	import type { DigimonListItem } from '$lib/api/types';
 	import DigimonCard from '$lib/components/DigimonCard.svelte';
 	import FilterControls from '$lib/components/FilterControls.svelte';
+	import ErrorState from '$lib/components/ErrorState.svelte';
+	import EmptyState from '$lib/components/EmptyState.svelte';
+	import SkeletonGrid from '$lib/components/SkeletonGrid.svelte';
 	import { ensureMeta, metaState } from '$lib/stores/meta.svelte';
 
 	import { onMount } from 'svelte';
@@ -110,7 +113,7 @@
 			total = res.total;
 		} catch (e) {
 			if (my !== reqSeq) return;
-			error = e instanceof Error ? e.message : '加载失败';
+			error = userMessage(e, '加载失败');
 		} finally {
 			if (my === reqSeq) loading = false;
 		}
@@ -134,7 +137,7 @@
 			total = res.count;
 		} catch (e) {
 			if (my !== reqSeq) return;
-			error = e instanceof Error ? e.message : '搜索失败';
+			error = userMessage(e, '搜索失败');
 		} finally {
 			if (my === reqSeq) loading = false;
 		}
@@ -237,10 +240,7 @@
 </svelte:head>
 
 {#if error && !loading}
-	<div class="error-box" role="alert">
-		无法连接数据服务：{error}。请确认后端已启动并已运行
-		<code>uv run python scripts/sync_data.py</code>。
-	</div>
+	<ErrorState message={error} retry={() => { error = null; load(); }} />
 {/if}
 
 <div class="hero">
@@ -344,9 +344,18 @@
 </div>
 
 {#if loading && items.length === 0}
-	<div class="spinner" aria-label="加载中"></div>
+	<SkeletonGrid count={12} />
 {:else if items.length === 0}
-	<div class="no-data">没有找到匹配的数码兽。</div>
+	<EmptyState
+		title="没有找到匹配的数码兽"
+		message="换个搜索词或减少筛选条件试试。"
+		ctaLabel="查看全部图鉴"
+	/>
+	{#if level || attribute || typeName || field || group || xAb !== null || official !== 'all'}
+		<div class="clear-empty">
+			<button class="btn" onclick={resetFilters}>清除全部筛选</button>
+		</div>
+	{/if}
 {:else}
 	<div class="grid">
 		{#each items as item}
@@ -444,6 +453,11 @@
 		margin: 14px 0 10px;
 		color: var(--text-dim);
 		font-size: 13px;
+	}
+	.clear-empty {
+		display: flex;
+		justify-content: center;
+		margin-top: 10px;
 	}
 
 	/* mobile filter entry — hidden on desktop, shown under 768px */

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import SectionHeader from '$lib/components/SectionHeader.svelte';
+	import ErrorState from '$lib/components/ErrorState.svelte';
 	import { ensureMeta, metaState } from '$lib/stores/meta.svelte';
 
 	onMount(() => ensureMeta());
@@ -22,7 +23,11 @@
 
 <SectionHeader title="数据集快照 Dataset Snapshot" code="SNAP" />
 {#if metaState.error}
-	<div class="error-box">{metaState.error}</div>
+	<ErrorState
+		message={metaState.dbUnavailable ? '数据库尚未同步' : '无法读取数据集信息'}
+		detail={metaState.dbUnavailable ? '请先运行 uv run python scripts/sync_data.py 生成数据库。' : undefined}
+		retry={ensureMeta}
+	/>
 {:else if metaState.meta}
 	<div class="stat-grid">
 		<div class="stat-cell"><div class="stat-v">{metaState.meta.counts.official.toLocaleString()}</div><div class="stat-k">官方图鉴 Official</div></div>
@@ -34,7 +39,10 @@
 		</div>
 	</div>
 {:else}
-	<div class="spinner"></div>
+	<div class="skeleton-lines" aria-label="加载中">
+		<div class="sk-line w80"></div>
+		<div class="sk-line w60"></div>
+	</div>
 {/if}
 
 <p class="faint" style="font-size:12px">
@@ -88,5 +96,27 @@
 	.source-list {
 		line-height: 1.9;
 		color: var(--text-dim);
+	}
+	.skeleton-lines {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		margin: 16px 0;
+	}
+	.skeleton-lines .sk-line {
+		height: 14px;
+		border-radius: 4px;
+		background: var(--surface-2);
+		opacity: 0.5;
+		animation: lm 1.4s var(--ease) infinite alternate;
+	}
+	.w80 { width: 80%; }
+	.w60 { width: 60%; }
+	@keyframes lm {
+		from { opacity: 0.35; }
+		to { opacity: 0.7; }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.skeleton-lines .sk-line { animation: none; }
 	}
 </style>

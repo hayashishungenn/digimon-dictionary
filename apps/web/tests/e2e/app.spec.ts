@@ -125,6 +125,24 @@ test('empty state shows friendly message', async ({ page }) => {
 	await expect(page.getByText('没有找到匹配的数码兽')).toBeVisible();
 });
 
+test('database-unavailable shows a safe, retryable error (not a stack)', async ({ page }) => {
+	// simulate the backend DB not being synced (503 on every API call)
+	await page.route('**/api/**', (route) =>
+		route.fulfill({ status: 503, contentType: 'application/json', body: '{"detail":"not synced"}' })
+	);
+	await page.goto('/');
+	// a friendly message, never the raw error text or a stack trace
+	await expect(page.locator('.error-state').first()).toBeVisible();
+	await expect(page.locator('.err-title').first()).toBeVisible();
+	// retry is offered
+	await expect(page.getByRole('button', { name: '重试' }).first()).toBeVisible();
+	// raw sql/filesystem/stack details never appear
+	const body = await page.locator('body').textContent() ?? '';
+	expect(body).not.toContain('Traceback');
+	expect(body).not.toContain('C:\\');
+	expect(body).not.toContain('sqlite3');
+});
+
 test('official / extended toggle filters the grid', async ({ page }) => {
 	await page.goto('/');
 	await page.waitForSelector('[data-testid="digimon-card"]');
