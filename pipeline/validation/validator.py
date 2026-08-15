@@ -292,12 +292,22 @@ def validate(conn: sqlite3.Connection) -> dict[str, Any]:
     img_pending = conn.execute(
         "SELECT COUNT(*) FROM digimon_image WHERE download_status = 'pending'"
     ).fetchone()[0]
+    # P0-3: a local thumbnail that failed to derive must surface, not vanish.
+    thumb_failed = conn.execute(
+        "SELECT COUNT(*) FROM digimon_image WHERE image_type = 'thumbnail' AND download_status = 'failed'"
+    ).fetchone()[0]
+    thumb_ok = conn.execute(
+        "SELECT COUNT(*) FROM digimon_image WHERE image_type = 'thumbnail' AND download_status = 'downloaded'"
+    ).fetchone()[0]
     if img_broken:
         issue("warning", "broken_image",
               f"{img_broken} image downloads failed (broken image URLs)")
     if img_pending:
         issue("info", "image_pending",
               f"{img_pending} images not yet downloaded")
+    if thumb_failed:
+        issue("warning", "thumbnail_failed",
+              f"{thumb_failed} thumbnail derivation(s) failed — see digimon_image.failure_reason")
 
     # --- coverage --------------------------------------------------------------
     # verified = sourced/checked name (official/community/...), present = any value.
@@ -508,6 +518,8 @@ def validate(conn: sqlite3.Connection) -> dict[str, Any]:
                 "missing_main_image": img_missing,
                 "broken": img_broken,
                 "pending": img_pending,
+                "thumbnails_derived": thumb_ok,
+                "thumbnails_failed": thumb_failed,
             },
             "profiles": {
                 "zh_cn": coverage("profile_zh_cn"),

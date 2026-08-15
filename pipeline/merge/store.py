@@ -533,9 +533,16 @@ class CanonicalStore:
     def _reset_derived(self, digimon_id: int) -> None:
         # digimon_relation is not reset here: it uses from/to columns and is
         # appended by the edge resolver, not by per-entity upserts.
+        # digimon_image thumbnail rows are preserved across syncs: they point
+        # at local derived cache files (data/images/thumbs/) that survive a
+        # rebuild — only main_image rows are re-derived from source records.
         for tbl in ("digimon_alias", "digimon_type", "digimon_field", "digimon_group",
-                    "digimon_skill", "digimon_image"):
+                    "digimon_skill"):
             self.conn.execute(f"DELETE FROM {tbl} WHERE digimon_id = ?", [digimon_id])
+        self.conn.execute(
+            "DELETE FROM digimon_image WHERE digimon_id = ? AND image_type = 'main_image'",
+            [digimon_id],
+        )
 
     # ---- field mergers -----------------------------------------------------
     def _merge_names(self, digimon_id: int, rec: SourceDigimon) -> None:
@@ -661,6 +668,17 @@ class CanonicalStore:
                VALUES(?,?,?,?,?,?)""",
             [digimon_id, "main_image", rec.image_url, rec.image_page, local, status],
         )
+        # a surviving local thumbnail (derived cache under data/images/thumbs/)
+        # is preserved across syncs and keeps digimon.thumbnail populated.
+        thumb = self.conn.execute(
+            "SELECT local_path FROM digimon_image WHERE digimon_id=? AND image_type='thumbnail'",
+            [digimon_id],
+        ).fetchone()
+        if thumb and thumb["local_path"]:
+            self.conn.execute(
+                "UPDATE digimon SET thumbnail=? WHERE id=?",
+                [thumb["local_path"], digimon_id],
+            )
 
     def _merge_first_appearance(self, digimon_id: int, records: list[SourceDigimon]) -> None:
         """Pick first-appearance fields from the highest-priority source."""

@@ -11,6 +11,7 @@ import type {
 } from './types';
 
 const API_BASE: string = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000/api';
+const API_ORIGIN: string = API_BASE.replace(/\/api$/, '');
 
 async function get<T>(path: string): Promise<T> {
 	const res = await fetch(`${API_BASE}${path}`);
@@ -62,6 +63,16 @@ export const api = {
 	evolution: (ident: string, depth = 1) => get<EvolutionGraph>(`/digimon/${ident}/evolution?depth=${depth}`),
 	skills: (ident: string) => get<Skill[]>(`/digimon/${ident}/skills`),
 	group: (name: string) => get<GroupResponse>(`/groups/${encodeURIComponent(name)}`),
+	// Resolve an API-relative image path (e.g. "/api/images/agumon/thumbnail")
+	// to an absolute URL the browser can load.
+	imageUrl: (path: string | null | undefined): string | null => {
+		if (!path) return null;
+		return path.startsWith('http') ? path : `${API_ORIGIN}${path}`;
+	},
+	// Direct cached-image URLs (P0-3): served by the API, fall back to the
+	// source URL server-side, and 404 into the placeholder when absent.
+	thumbUrl: (ident: string | number) => `${API_BASE}/images/${ident}/thumbnail`,
+	mainUrl: (ident: string | number) => `${API_BASE}/images/${ident}/main_image`,
 };
 
 // Debounced search helper for the search bar.

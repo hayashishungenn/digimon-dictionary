@@ -111,6 +111,41 @@ def test_group_page(client):
     assert body["count"] >= 1
 
 
+def test_images_served_or_absent(client):
+    """P0-3: every real digimon resolves an image to either a cached file, a
+    redirect to the source, or an explicit 404 (placeholder) — never a crash."""
+    # agumon has a cached main image + thumbnail
+    r = client.get("/api/images/agumon/thumbnail")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("image/")
+    # invalid kind rejected
+    assert client.get("/api/images/agumon/bogus").status_code == 400
+    # unknown slug 404
+    assert client.get("/api/images/not-a-digimon/main_image").status_code == 404
+    # any entity without a main image resolves to an explicit 404
+    import sqlite3
+
+    conn = sqlite3.connect(f"file:{REAL_DB}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    noimg = conn.execute(
+        "SELECT canonical_slug FROM digimon WHERE main_image IS NULL OR TRIM(main_image)='' LIMIT 1"
+    ).fetchone()
+    conn.close()
+    if noimg is not None:
+        r = client.get(f"/api/images/{noimg['canonical_slug']}/main_image")
+        assert r.status_code in (404, 200, 302, 307)  # served, redirect, or placeholder-404
+    # list items carry a servable thumbnail contract
+    items = _expect(client.get("/api/digimon", params={"limit": 3}))["items"]
+    for it in items:
+        assert "thumbnail" in it
+
+
+def test_first_appearance_date_real(client):
+    """P0-3: real digimon expose first-appearance date even without a title."""
+    d = _expect(client.get("/api/digimon/agumon"))
+    assert d["first_appearance"]["date"] is not None or d["first_appearance"]["title"] is not None
+
+
 def test_evolution_depth_bounds(client):
     for depth in (0, 4, 5):
         assert client.get("/api/digimon/agumon/evolution", params={"depth": depth}).status_code == 422

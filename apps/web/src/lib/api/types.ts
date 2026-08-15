@@ -100,6 +100,9 @@ export interface Image {
 	height: number | null;
 	transparent: boolean | null;
 	sha256: string | null;
+	content_type: string | null;
+	fetched_at: string | null;
+	failure_reason: string | null;
 }
 
 export interface EvolutionNode {

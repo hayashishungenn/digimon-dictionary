@@ -194,3 +194,91 @@ def test_main_exit_code(tmp_path, monkeypatch):
     monkeypatch.setattr(dl, "DB_PATH", tmp_path / "db.sqlite")
     _setup_db(tmp_path / "db.sqlite", [(1, "https://digimon.net/x.jpg")])  # forbidden -> failure
     assert dl.main([]) != 0
+
+
+# ---------------------------------------------------------------------------
+# P0-3: metadata backfill + local thumbnail derivation
+# ---------------------------------------------------------------------------
+def real_png(w: int = 200, h: int = 150) -> bytes:
+    """A genuinely decodable PNG (Pillow can open it) for thumbnail tests."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("RGBA", (w, h), (255, 0, 0, 255)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _downloaded_main_db(path: Path, digimon_id: int, png: bytes, fname: str) -> None:
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = DELETE")
+    conn.execute("PRAGMA foreign_keys = ON")
+    create_schema(conn)
+    img_dir = path.parent / "images"
+    img_dir.mkdir(parents=True, exist_ok=True)
+    local = img_dir / fname
+    local.write_bytes(png)
+    conn.execute("INSERT INTO digimon(id, canonical_slug) VALUES(?,?)", [digimon_id, f"d{digimon_id}"])
+    conn.execute(
+        """INSERT INTO digimon_image(digimon_id, image_type, remote_url, local_path, download_status)
+           VALUES(?, 'main_image', 'https://digi-api.com/x.png', ?, 'downloaded')""",
+        [digimon_id, str(local)],
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_thumbnail_derivation(tmp_path, monkeypatch):
+    monkeypatch.setattr(dl, "IMAGES_DIR", tmp_path / "images")
+    monkeypatch.setattr(dl, "THUMBS_DIR", tmp_path / "images" / "thumbs")
+    db = tmp_path / "db.sqlite"
+    _downloaded_main_db(db, 1, real_png(200, 150), "main.png")
+
+    derived, failed = dl.ensure_thumbnails(connect(db))
+    assert derived == 1 and failed == 0
+
+    conn = connect(db)
+    row = conn.execute("SELECT * FROM digimon_image WHERE digimon_id=1 AND image_type='thumbnail'").fetchone()
+    assert row["download_status"] == "downloaded"
+    assert row["width"] <= 128 and row["height"] <= 128
+    assert row["content_type"] == "image/png"
+    assert row["sha256"]
+    assert Path(row["local_path"]).exists()
+    # digimon.thumbnail points at the local cache path
+    d = conn.execute("SELECT thumbnail FROM digimon WHERE id=1").fetchone()
+    assert d["thumbnail"] == row["local_path"]
+    conn.close()
+
+
+def test_thumbnail_failure_recorded(tmp_path, monkeypatch):
+    monkeypatch.setattr(dl, "IMAGES_DIR", tmp_path / "images")
+    monkeypatch.setattr(dl, "THUMBS_DIR", tmp_path / "images" / "thumbs")
+    db = tmp_path / "db.sqlite"
+    # corrupt source file that Pillow cannot decode
+    _downloaded_main_db(db, 1, b"this is not an image at all", "main.png")
+
+    derived, failed = dl.ensure_thumbnails(connect(db))
+    assert derived == 0 and failed == 1
+    conn = connect(db)
+    row = conn.execute("SELECT * FROM digimon_image WHERE digimon_id=1 AND image_type='thumbnail'").fetchone()
+    assert row["download_status"] == "failed"
+    assert row["failure_reason"]
+    conn.close()
+
+
+def test_backfill_metadata(tmp_path, monkeypatch):
+    monkeypatch.setattr(dl, "IMAGES_DIR", tmp_path / "images")
+    db = tmp_path / "db.sqlite"
+    png = real_png(64, 48)
+    _downloaded_main_db(db, 1, png, "main.png")
+    n = dl.backfill_metadata(connect(db))
+    assert n == 1
+    conn = connect(db)
+    row = conn.execute("SELECT * FROM digimon_image WHERE digimon_id=1").fetchone()
+    assert row["width"] == 64 and row["height"] == 48
+    assert row["sha256"] == dl.sha256_of(png)
+    assert row["content_type"] == "image/png"
+    assert row["fetched_at"]
+    conn.close()

@@ -14,7 +14,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from pipeline.core.enums import Attribute, Level
 from pipeline.core.schema import connect_readonly
@@ -79,6 +79,22 @@ def _db() -> Any:
     if not db.exists():
         raise HTTPException(503, "Dataset not synced yet. Run `uv run python scripts/sync_data.py`.")
     return connect_readonly(db)
+
+
+def _thumb_servable(item: dict[str, Any]) -> str | None:
+    """Turn the stored local thumbnail path into a servable API path.
+
+    ``digimon.thumbnail`` holds the local cache path (data/images/thumbs/...);
+    the API exposes it as ``/api/images/<id>/thumbnail`` so the frontend can
+    load it without knowing the filesystem. Returns None when no thumbnail was
+    derived (the UI then falls back to the main image / placeholder)."""
+    if item.get("thumbnail"):
+        return f"/api/images/{item['id']}/thumbnail"
+    return None
+
+
+# image types the /api/images/{ident}/{kind} endpoint serves.
+_IMAGE_KINDS = {"main_image", "thumbnail"}
 
 
 # Stable error responses: never leak absolute paths or SQLite internals (T5.10).
@@ -173,6 +189,8 @@ def list_digimon(
             x_antibody=x_antibody,
             official=official if official != "all" else None,
         )
+        for it in items:
+            it["thumbnail"] = _thumb_servable(it)
         return {"items": items, "total": total, "limit": limit, "offset": offset}
     finally:
         conn.close()
@@ -185,7 +203,9 @@ def digimon_detail(ident: str) -> dict[str, Any]:
         base = queries.get_digimon(conn, ident)
         if not base:
             raise HTTPException(404, f"Unknown digimon: {ident}")
-        return queries.get_digimon_full(conn, base["id"])
+        detail = queries.get_digimon_full(conn, base["id"])
+        detail["thumbnail"] = _thumb_servable(detail)
+        return detail
     finally:
         conn.close()
 
@@ -201,6 +221,8 @@ def search(
     conn = _db()
     try:
         items = queries.search_digimon(conn, q, limit=limit)
+        for it in items:
+            it["thumbnail"] = _thumb_servable(it)
         return {"query": q, "items": items, "count": len(items)}
     finally:
         conn.close()
@@ -268,6 +290,64 @@ def group_detail(group_name: str) -> dict[str, Any]:
         members = queries.group_members(conn, group_name)
         if not members:
             raise HTTPException(404, f"Unknown group: {group_name}")
+        for m in members:
+            m["thumbnail"] = _thumb_servable(m)
         return {"name": group_name, "members": members, "count": len(members)}
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------------------
+# images (P0-3): serve the local cached main/thumbnail art.
+# --------------------------------------------------------------------------
+@app.get("/api/images/{ident}/{kind}")
+def digimon_image(ident: str, kind: str):
+    """Serve a digimon's cached image.
+
+    ``kind`` is ``main_image`` or ``thumbnail``. The local cache under
+    data/images/ is served when present; otherwise the request redirects to the
+    source URL (the browser loads it); a digimon with no image at all returns
+    404, and the frontend renders a placeholder with its data/source status.
+    """
+    if kind not in _IMAGE_KINDS:
+        raise HTTPException(400, "kind must be main_image or thumbnail")
+    from pathlib import Path as _Path
+
+    from pipeline.core.config import IMAGES_DIR
+
+    conn = _db()
+    try:
+        base = queries.get_digimon(conn, ident)
+        if not base:
+            raise HTTPException(404, f"Unknown digimon: {ident}")
+        digimon_id = base["id"]
+        row = conn.execute(
+            """SELECT remote_url, local_path, download_status, content_type
+               FROM digimon_image WHERE digimon_id=? AND image_type=?
+               ORDER BY id LIMIT 1""",
+            [digimon_id, kind],
+        ).fetchone()
+        if row is None:
+            # no image of the requested type — fall back to the main art
+            row = conn.execute(
+                """SELECT remote_url, local_path, download_status, content_type
+                   FROM digimon_image WHERE digimon_id=? AND image_type='main_image'
+                   ORDER BY id LIMIT 1""",
+                [digimon_id],
+            ).fetchone()
+            if row is None:
+                raise HTTPException(404, "no image for this digimon")
+        local = row["local_path"]
+        if local:
+            path = _Path(local).resolve()
+            # only ever serve files inside the local image cache
+            cache_root = IMAGES_DIR.resolve()
+            if path.is_file() and cache_root in path.parents:
+                media = row["content_type"] or "image/png"
+                return FileResponse(path, media_type=media)
+        if row["remote_url"]:
+            # local cache missing (e.g. not yet downloaded) — load the source URL
+            return RedirectResponse(row["remote_url"])
+        raise HTTPException(404, "image not available")
     finally:
         conn.close()

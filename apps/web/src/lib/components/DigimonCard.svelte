@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { DigimonListItem } from '$lib/api/types';
+	import { api } from '$lib/api/client';
 	import PlaceholderImage from './PlaceholderImage.svelte';
 	import { isFavorite, toggleFavorite } from '$lib/stores/favorites.svelte';
 	import { levelLabel, attrLabel } from './Badges.svelte';
@@ -9,8 +10,12 @@
 	}
 	let { item }: Props = $props();
 
+	// P0-3: list cards use the local thumbnail (served by the API), falling back
+	// to the main image URL, then the placeholder — a load failure never breaks
+	// the card layout.
 	function imgSrc(item: DigimonListItem): string | null {
-		return item.main_image ?? item.thumbnail ?? null;
+		if (item.thumbnail) return api.imageUrl(item.thumbnail);
+		return item.main_image ?? null;
 	}
 </script>
 

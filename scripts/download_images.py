@@ -40,6 +40,38 @@ ALLOWED_IMAGE_HOSTS = ("digi-api.com", "wikimon.net")
 # image/* content types we will accept and write to disk.
 _ALLOWED_CONTENT_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp")
 
+# Local derived thumbnail cache (P0-3): smaller copies of the main art for list
+# views, stored under data/images/thumbs/ (still gitignored, never committed).
+THUMBS_DIR = IMAGES_DIR / "thumbs"
+THUMB_MAX_EDGE = 128  # px
+
+
+def _content_type(suffix: str) -> str:
+    return {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".webp": "image/webp", ".avif": "image/avif",
+        ".bmp": "image/bmp",
+    }.get(suffix.lower(), "application/octet-stream")
+
+
+def _write_thumbnail(src: Path, dst: Path) -> None:
+    """Downscale `src` into a PNG thumbnail at `dst` (best-effort, non-destructive).
+
+    The source file is only ever read; the thumbnail is a new derived file so a
+    failure can never corrupt the original artwork."""
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(src) as im:
+            im.thumbnail((THUMB_MAX_EDGE, THUMB_MAX_EDGE))
+            im.save(dst, format="PNG", optimize=True)
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise OSError(f"thumbnail failed for {src.name}: {exc}") from exc
+
+
+def _thumbnail_local(digimon_id: int) -> Path:
+    return THUMBS_DIR / f"digi_{digimon_id:05d}.png"
+
 
 def sha256_of(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -106,6 +138,116 @@ def _local_path(digimon_id: int, url: str) -> Path:
         suffix = ".img"
     digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:8]
     return IMAGES_DIR / f"digi_{digimon_id:05d}_{digest}{suffix}"
+
+
+def backfill_metadata(conn) -> int:
+    """Backfill width/height/sha256/content_type/fetched_at for every cached
+    image from the file on disk (idempotent; used to enrich an already-downloaded
+    cache). Returns the number of rows enriched."""
+    done = 0
+    rows = conn.execute(
+        "SELECT id, local_path FROM digimon_image WHERE download_status = 'downloaded'"
+    ).fetchall()
+    for row in rows:
+        if not row["local_path"]:
+            continue
+        p = Path(row["local_path"])
+        if not p.exists():
+            continue
+        try:
+            data = p.read_bytes()
+        except OSError:
+            continue
+        dims = _image_dimensions(data)
+        conn.execute(
+            """UPDATE digimon_image SET
+                 width=COALESCE(width, ?), height=COALESCE(height, ?),
+                 sha256=COALESCE(sha256, ?), content_type=COALESCE(content_type, ?),
+                 fetched_at=COALESCE(fetched_at, datetime('now'))
+               WHERE id=?""",
+            [dims[0] if dims else None, dims[1] if dims else None,
+             sha256_of(data), _content_type(p.suffix), row["id"]],
+        )
+        done += 1
+    conn.commit()
+    return done
+
+
+def ensure_thumbnails(conn, *, force: bool = False) -> tuple[int, int]:
+    """Derive a local thumbnail for every downloaded main image (P0-3).
+
+    Writes ``data/images/thumbs/digi_<id>.png`` (a new derived cache file) and
+    records an ``image_type='thumbnail'`` digimon_image row with dimensions,
+    sha256, content type and fetch time. Also populates ``digimon.thumbnail``
+    with the local cache path. Returns ``(derived, failed)`` — a failure is
+    recorded with ``failure_reason`` so the quality report can surface it.
+    """
+    THUMBS_DIR.mkdir(parents=True, exist_ok=True)
+    rows = conn.execute(
+        """SELECT id, digimon_id, remote_url, local_path FROM digimon_image
+           WHERE image_type = 'main_image' AND download_status = 'downloaded'"""
+    ).fetchall()
+    derived = 0
+    failed = 0
+    for row in rows:
+        digimon_id = row["digimon_id"]
+        src = Path(row["local_path"]) if row["local_path"] else None
+        if not src or not src.exists():
+            continue  # nothing to derive from; the main file is missing
+        dst = _thumbnail_local(digimon_id)
+        try:
+            if not dst.exists() or force:
+                _write_thumbnail(src, dst)
+            data = dst.read_bytes()
+            dims = _image_dimensions(data)
+            existing = conn.execute(
+                "SELECT id FROM digimon_image WHERE digimon_id=? AND image_type='thumbnail'",
+                [digimon_id],
+            ).fetchone()
+            thumb_meta = [
+                digimon_id, str(dst), dims[0] if dims else None, dims[1] if dims else None,
+                sha256_of(data), "image/png",
+            ]
+            if existing:
+                conn.execute(
+                    """UPDATE digimon_image SET local_path=?, width=?, height=?, sha256=?,
+                       content_type=?, download_status='downloaded', failure_reason=NULL,
+                       fetched_at=datetime('now')
+                       WHERE id=?""",
+                    [*thumb_meta, existing["id"]],
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO digimon_image
+                       (digimon_id, image_type, local_path, width, height, sha256,
+                        content_type, download_status, fetched_at)
+                       VALUES(?, 'thumbnail', ?, ?, ?, ?, ?, 'downloaded', datetime('now'))""",
+                    thumb_meta,
+                )
+            conn.execute("UPDATE digimon SET thumbnail=? WHERE id=?", [str(dst), digimon_id])
+            derived += 1
+        except OSError as exc:
+            failed += 1
+            existing = conn.execute(
+                "SELECT id FROM digimon_image WHERE digimon_id=? AND image_type='thumbnail'",
+                [digimon_id],
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE digimon_image SET download_status='failed', failure_reason=?, "
+                    "fetched_at=datetime('now') WHERE id=?",
+                    [str(exc), existing["id"]],
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO digimon_image
+                       (digimon_id, image_type, local_path, download_status, failure_reason, fetched_at)
+                       VALUES(?, 'thumbnail', ?, 'failed', ?, datetime('now'))""",
+                    [digimon_id, str(dst), str(exc)],
+                )
+            logger.warning("thumbnail failed for digimon %d: %s", digimon_id, exc)
+    conn.commit()
+    return derived, failed
 
 
 def download_all(db_path: Path, *, limit: int | None = None, force: bool = False,
@@ -197,13 +339,32 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--no-thumbnails", action="store_true",
+                    help="skip local thumbnail derivation (P0-3)")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     done, refused, failed = download_all(DB_PATH, limit=args.limit, force=args.force)
     logger.info("done: %d images cached under data/images/", done)
-    if failed or refused:
-        logger.error("image download finished with %d failed and %d refused (policy)", failed, refused)
+
+    conn = connect(DB_PATH)
+    try:
+        enriched = backfill_metadata(conn)
+        logger.info("metadata backfilled for %d cached images", enriched)
+        derived = 0
+        thumb_failed = 0
+        if not args.no_thumbnails:
+            derived, thumb_failed = ensure_thumbnails(conn, force=args.force)
+            logger.info("thumbnails: %d derived, %d failed (data/images/thumbs/)", derived, thumb_failed)
+    finally:
+        conn.close()
+
+    if failed or refused or thumb_failed:
+        logger.error(
+            "image pipeline finished with %d failed, %d refused (policy) and %d thumbnail failures",
+            failed, refused, thumb_failed,
+        )
         return 1
+    logger.info("image pipeline ok: %d main + %d thumbnails under data/images/", done, derived)
     return 0
 
 

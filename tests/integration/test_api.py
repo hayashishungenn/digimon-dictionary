@@ -383,3 +383,79 @@ def test_search_returns_same_entity_across_languages_paginated(client):
     ids2 = _ids(r2.json()["items"])
     assert ids1 and ids2
     assert set(ids1).isdisjoint(ids2)
+
+
+# ---------------------------------------------------------------------------
+# P0-3: image serving endpoint + first appearance + thumbnail contract
+# ---------------------------------------------------------------------------
+def test_image_endpoint_404_for_digimon_without_image(client, fixture_db):
+    # fixture digimon have no digimon_image rows -> 404 (frontend shows placeholder)
+    r = client.get("/api/images/agumon/main_image")
+    assert r.status_code == 404
+
+
+def test_image_endpoint_rejects_bad_kind(client):
+    assert client.get("/api/images/agumon/bogus").status_code == 400
+
+
+def test_image_endpoint_unknown_slug_404(client):
+    assert client.get("/api/images/not-a-digimon/main_image").status_code == 404
+
+
+def test_image_endpoint_serves_local_file(client, fixture_db, tmp_path, monkeypatch):
+    import struct
+
+    import pipeline.core.config as cfg
+
+    _path, conn = fixture_db
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + struct.pack(">II", 32, 32) + b"\x08\x06\x00\x00\x00"
+    img_dir = tmp_path / "images"
+    img_dir.mkdir()
+    local = img_dir / "agumon.png"
+    local.write_bytes(png)
+    monkeypatch.setattr(cfg, "IMAGES_DIR", img_dir)  # the API resolves cache root from config
+    did = conn.execute("SELECT id FROM digimon WHERE canonical_slug='agumon'").fetchone()["id"]
+    conn.execute("DELETE FROM digimon_image WHERE digimon_id=?", [did])  # isolate from prior tests
+    conn.execute(
+        """INSERT INTO digimon_image(digimon_id, image_type, remote_url, local_path, download_status, content_type)
+           VALUES(?, 'main_image', 'https://digi-api.com/x.png', ?, 'downloaded', 'image/png')""",
+        [did, str(local)],
+    )
+    conn.commit()
+    r = client.get("/api/images/agumon/main_image")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("image/png")
+    assert r.content == png
+
+
+def test_image_endpoint_redirects_to_remote_without_local(client, fixture_db):
+    _path, conn = fixture_db
+    did = conn.execute("SELECT id FROM digimon WHERE canonical_slug='agumon'").fetchone()["id"]
+    conn.execute("DELETE FROM digimon_image WHERE digimon_id=?", [did])  # isolate from prior tests
+    conn.execute(
+        """INSERT INTO digimon_image(digimon_id, image_type, remote_url, download_status)
+           VALUES(?, 'main_image', 'https://digi-api.com/images/digimon/w/Agumon.png', 'pending')""",
+        [did],
+    )
+    conn.commit()
+    r = client.get("/api/images/agumon/main_image", follow_redirects=False)
+    assert r.status_code in (302, 307)
+    assert r.headers["location"] == "https://digi-api.com/images/digimon/w/Agumon.png"
+
+
+def test_list_thumbnail_field_is_null_without_cache(client):
+    # fixture has no thumbnails -> thumbnail stays null so the UI falls back
+    # to the main image / placeholder instead of a dead URL
+    items = client.get("/api/digimon", params={"limit": 3}).json()["items"]
+    assert all("thumbnail" in it for it in items)
+    assert all(it["thumbnail"] is None for it in items)
+
+
+def test_first_appearance_date_returned_even_without_title(client, fixture_db):
+    _path, conn = fixture_db
+    did = conn.execute("SELECT id FROM digimon WHERE canonical_slug='agumon'").fetchone()["id"]
+    conn.execute("UPDATE digimon SET first_appearance_date='1997', first_appearance_title=NULL WHERE id=?", [did])
+    conn.commit()
+    d = client.get("/api/digimon/agumon").json()
+    assert d["first_appearance"]["date"] == "1997"
+    assert d["first_appearance"]["title"] is None

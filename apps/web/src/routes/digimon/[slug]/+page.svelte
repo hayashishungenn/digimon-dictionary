@@ -93,6 +93,18 @@
 		};
 		return map[t] ?? t;
 	}
+
+	// Image status derived from the digimon_image rows (P0-3): the UI expresses
+	// downloaded / remote-only / failed / missing instead of silently hiding it.
+	let imageStatus = $derived.by(() => {
+		if (!data) return null;
+		const main = data.images.find((i) => i.image_type === 'main_image');
+		if (!main) return { kind: 'missing', text: '图片缺失（无来源）' };
+		if (main.download_status === 'downloaded') return { kind: 'downloaded', text: '图片已本地缓存' };
+		if (main.download_status === 'failed') return { kind: 'failed', text: `图片下载失败${main.failure_reason ? `：${main.failure_reason}` : ''}` };
+		if (main.download_status === 'pending') return { kind: 'pending', text: '图片待下载' };
+		return { kind: main.download_status, text: `图片状态：${main.download_status}` };
+	});
 </script>
 
 <svelte:head>
@@ -112,11 +124,14 @@
 				onclick={() => toggleFavorite(data!.id)}
 			>{isFavorite(data.id) ? '★' : '☆'}</button>
 			<PlaceholderImage
-				src={data.main_image ?? data.thumbnail}
+				src={data.main_image ? api.mainUrl(data.id) : null}
 				alt={data.name_zh_cn ?? data.name_en ?? ''}
 				label={data.name_en ?? 'NO IMAGE'}
 				loading="eager"
 			/>
+			{#if imageStatus}
+				<div class="img-status {imageStatus.kind}" role="status">{imageStatus.text}</div>
+			{/if}
 		</div>
 		<div class="detail-main">
 			<div class="detail-id mono">#{data.id} · {data.canonical_slug}</div>
@@ -177,10 +192,19 @@
 				<div class="v">{data.types.map((t) => t.name).join(' / ')}</div>
 			</div>
 		{/if}
-		{#if data.first_appearance.title}
+		{#if data.first_appearance.date || data.first_appearance.title}
 			<div class="basic-cell">
 				<div class="k">首次登场</div>
-				<div class="v">{data.first_appearance.title}{data.first_appearance.medium ? `（${data.first_appearance.medium}）` : ''}</div>
+				<div class="v">
+					{#if data.first_appearance.title}
+						{data.first_appearance.title}{data.first_appearance.medium ? `（${data.first_appearance.medium}）` : ''}
+					{:else}
+						<span class="faint">标题未记录</span>
+					{/if}
+					{#if data.first_appearance.date}
+						<span class="faint"> · {data.first_appearance.date}</span>
+					{/if}
+				</div>
 			</div>
 		{/if}
 		{#if data.fields.length}
@@ -537,5 +561,18 @@
 		border: 1px solid rgba(255, 200, 87, 0.3);
 		border-radius: var(--radius-sm);
 		padding: 8px 12px;
+	}
+	.img-status {
+		margin-top: 8px;
+		font-size: 11px;
+		text-align: center;
+		color: var(--text-faint);
+	}
+	.img-status.downloaded {
+		color: var(--green);
+	}
+	.img-status.failed,
+	.img-status.missing {
+		color: var(--gold);
 	}
 </style>

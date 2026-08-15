@@ -225,7 +225,7 @@ def get_digimon_full(conn: sqlite3.Connection, digimon_id: int) -> dict[str, Any
         dict(r)
         for r in conn.execute(
             """SELECT image_type, remote_url, local_path, download_status, width, height,
-                      transparent, sha256
+                      transparent, sha256, content_type, fetched_at, failure_reason
                FROM digimon_image WHERE digimon_id = ? ORDER BY id""",
             [digimon_id],
         )

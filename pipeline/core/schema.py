@@ -22,7 +22,7 @@ from pathlib import Path
 # the DB's `PRAGMA user_version`. Migrations are additive and never drop or
 # destroy data — an old DB is upgraded in place, so existing rows survive.
 # ---------------------------------------------------------------------------
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def _migrate_v1(conn: sqlite3.Connection) -> None:
@@ -128,11 +128,27 @@ def _migrate_v4(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v5(conn: sqlite3.Connection) -> None:
+    """v4 -> v5: image metadata (P0-3).
+
+    Adds content_type and failure_reason to digimon_image so every cached
+    image records its format and, when a download/derivation failed, why —
+    the UI and quality report can then distinguish a healthy cached image
+    from a broken one instead of a bare "failed".
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(digimon_image)")}
+    if "content_type" not in cols:
+        conn.execute("ALTER TABLE digimon_image ADD COLUMN content_type TEXT")
+    if "failure_reason" not in cols:
+        conn.execute("ALTER TABLE digimon_image ADD COLUMN failure_reason TEXT")
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_v1,
     2: _migrate_v2,
     3: _migrate_v3,
     4: _migrate_v4,
+    5: _migrate_v5,
 }
 
 
