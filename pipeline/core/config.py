@@ -15,6 +15,9 @@ EXPORTS_DIR = ROOT / "exports"
 
 DB_PATH = DATA_DIR / "digidex.sqlite"
 
+# Local backup / restore (S0-2): timestamped directories under data/backups/.
+BACKUP_DIR = DATA_DIR / "backups"
+
 # Sub-directories for each ingestion source (raw snapshots).
 RAW_SOURCES: dict[str, Path] = {
     "dapi": RAW_DIR / "dapi",

@@ -55,3 +55,34 @@
 - [x] **P1-2 字段级 provenance/冲突/清洁文本**：递归 wikitext 清洗器（语言标记/词源模板/链接/ref 渲染），嵌套模板不再截断；`provenance.run_id`；每实体 content_hash 覆盖全部规范化字段；关系边记录真实来源；未解析模板保留原文并进 review queue；详情页来源表带“有来源/冲突/缺失”状态。
 - [x] **P1-3 真实 DB 浏览器/窄屏验收**：`playwright.realdb.config.ts` + `tests/e2e-realdb/`（18/18 通过，桌面 + 窄屏），覆盖三语/简称/部分搜索、组合筛选、Agumon 详情、进化 depth2 截断、组织页、缺图占位、无横向溢出、键盘导航。
 - [x] **P1-4 报告/文档刷新**：`docs/delivery-report.md` 数字与真实数据库一致。
+
+## 阶段四（自用稳定版，S0 任务书）
+
+> 目标：个人本地长期使用的图鉴系统。同步失败不破坏上次可用库，可备份/恢复/查看快照，
+> 缺失与冲突可追踪，不依赖公网服务。执行顺序见 `docs/self-use-next-taskbook.md` 与
+> `docs/frontend-ui-taskbook.md`。
+
+### 已完成
+
+- [x] **S0-0 基线锁定**：真实 DB 运行基线（`docs/self-use-baseline.md`）——integrity ok、三语搜索一致、
+      组合筛选正确、进化图有界截断可解释、Python/前端/两种 E2E 全绿。
+- [x] **S0-1 同步状态与正式库一致性**：`source_sync` 与 `sync_run` 同 run_id 且 `sync_run.started_at`
+      记录真实开始时间；本地发布 manifest `data/.publish_manifest.json`（run_id / snapshot_date / DB 与
+      报告 SHA-256 / schema 版本 / 图片阶段 / 增量基线 / state_committed）；`state.save()` 失败不再静默
+      （manifest 记录 state_committed=false，可识别"已发布但状态未提交"）；下一次运行从 DB 的
+      `sync_run`/`source_sync` 自动 reconcile 状态并修复 manifest；发布前对 candidate 做
+      `PRAGMA integrity_check`（candidate 损坏不发布）；图片阶段失败在 manifest 的 image_stage 与
+      sync_run 注释中与 canonical 库成功区分；失败注入测试覆盖状态保存 / manifest 写 / checkpoint /
+      candidate 损坏 / 图片阶段 / publish 前后中断。
+- [x] **S0-2 本地备份、恢复与快照检查**：`scripts/backup_local.py`（时间戳目录 + `backup.json`，含 DB /
+      同步状态 / 发布 manifest / 质量报告，可选图片缓存，`--keep` 修剪，`--dry-run`）、
+      `scripts/restore_local.py`（先校验 manifest+哈希+integrity+schema 兼容，再写临时文件，原子替换，
+      失败正式库不变，默认 dry-run/需 `--yes`）、`scripts/inspect_snapshot.py`（实时或备份目录的
+      快照摘要，`--json`）。真实 DB 备份→恢复→临时目标验证通过；Windows 路径带空格可用。
+
+### 待完成
+
+- [ ] UI-P0 系列前端核心（壳层 / 首页搜索筛选卡片 / 详情页 / 进化体验）
+- [ ] S1-1 人工复核队列工作流、S1-2 数据覆盖、S1-3 搜索筛选导出、S1-4 本地维护体验
+- [ ] UI-P1 / UI-P2（状态系统 / 响应式与可访问性 / 图片性能 / 动效 / 个人收藏）
+- [ ] S2-1 个人注释标签收藏、S2-2 独立游戏技能接入

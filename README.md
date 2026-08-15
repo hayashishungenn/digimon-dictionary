@@ -77,6 +77,9 @@ npm run dev                   # http://localhost:5173
 | `verify_samples.py` | 抽样人工验证（随机 N 只 + 固定名单） |
 | `download_images.py` | 本地缓存图片到 data/images/（不提交 git），并派生缩略图到 data/images/thumbs/ |
 | `export_dataset.py` | 导出 digimon.json / digimon.csv / digidex.sqlite |
+| `backup_local.py` | 本地备份到 `data/backups/backup-<时间戳>/`（DB+同步状态+发布 manifest+报告，可选图片缓存，`--with-images` / `--keep N` / `--dry-run`） |
+| `restore_local.py` | 从备份恢复（先校验哈希/integrity/schema，再原子替换；默认 dry-run，覆盖需 `--yes`） |
+| `inspect_snapshot.py` | 查看当前快照或备份目录摘要（`--path <backup>` / `--json`） |
 | `uv run uvicorn apps.api.main:app` | FastAPI 后端 |
 | `cd apps/web && npm run dev` | SvelteKit 前端 |
 

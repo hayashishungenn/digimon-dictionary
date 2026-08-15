@@ -48,6 +48,8 @@ data/.publish_manifest.json
 data/.publish_manifest.json.tmp
 data/.sync.lock
 data/.http_cache/
+data/backups/
+data/.restore_tmp/
 
 # Editor / OS
 .idea/
