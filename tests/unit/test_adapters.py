@@ -127,3 +127,48 @@ def test_dapi_pagination_ignores_broken_totalPages():
 
     ids = DapiAdapter()._fetch_all_ids(FakeFetcher())
     assert len(ids) == 1488
+
+
+def test_fetcher_force_bypasses_cache(tmp_path):
+    """A Fetcher built with force=True must hit the network, not the cache
+    (T4.4): a cached response is ignored and the fresh one is written."""
+    from pipeline.core.request import Fetcher
+
+    cache_dir = tmp_path / "cache"
+
+    hits = {"n": 0}
+
+    class FakeClient:
+        def get(self, url, params=None):
+            hits["n"] += 1
+            return FakeResponse()
+
+        def close(self):
+            return None
+
+    class FakeResponse:
+        status_code = 200
+        content = b'{"fresh": true}'
+        headers = {"content-type": "application/json"}
+        url = "https://example.invalid/x"
+        http_version = "HTTP/1.1"
+
+        def raise_for_status(self):
+            return None
+
+    f = Fetcher(cache_dir=cache_dir)
+    f._client = FakeClient()  # type: ignore[assignment]
+    # first fetch populates the cache
+    assert f.get_json("https://example.invalid/x") == {"fresh": True}
+    assert hits["n"] == 1
+    # second (cached) fetch does NOT hit the network
+    assert f.get_json("https://example.invalid/x") == {"fresh": True}
+    assert hits["n"] == 1
+
+    # force fetcher ignores the cache and fetches again
+    f2 = Fetcher(cache_dir=cache_dir, force=True)
+    f2._client = FakeClient()  # type: ignore[assignment]
+    assert f2.get_json("https://example.invalid/x") == {"fresh": True}
+    assert hits["n"] == 2
+    f.close()
+    f2.close()

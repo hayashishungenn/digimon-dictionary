@@ -1,9 +1,9 @@
 # 交付报告 — DigiDex 数码宝贝全图鉴
 
-> 数据快照：**2026-08-14**（现有已同步数据库；本次未重新执行真实全量同步，见"未验证项"）
+> 数据快照：**2026-08-14**（由本次用改造后代码对真实 source 重新同步并发布；缓存辅助，含全量 5 源）
 > 改造周期：T1–T9 可靠性 / 质量改造，commit 范围见文末。
 
-## 数据统计（来自 `data/digidex.sqlite`，快照 2026-08-14）
+## 数据统计（来自重新同步后的 `data/digidex.sqlite`，快照 2026-08-14）
 
 | 指标 | 值 |
 |---|---|
@@ -17,15 +17,12 @@
 | 有技能数码兽 / 技能总数 | 1,530 / 7,188 |
 | 进化关系数 | 18,670 |
 | 相关形态数 | 4,633 |
-| 别名数 | 2,870 |
+| 别名数 | **2,307**（schema v2 去重后） |
 | 游戏数值（Cyber Sleuth） | 327（`game_digimon_stats`，独立于世界观） |
 | 数据冲突（data_conflict） | 445（已记录未静默） |
-| 仍需人工确认（manual_review_queue open） | 1 |
-| `source_sync` 表 | **0 行**（T4 起每次成功同步会写入；当前库为改造前同步产物） |
-
-> 注：以上为现有数据库的真实查询结果；上表中的数字与旧的 2026-08-13 交付报告
-> 不同，是因为数据库在 08-14 有一次更新，且旧的报告数字（447 冲突 / 2,879 别名 /
-> 18,745 边）与当前库不一致，以本次实际查询为准。
+| 仍需人工确认（manual_review_queue open） | **707**（新增 resolver/review 如实上报的未解析进化/关系目标等） |
+| `source_sync` 表 | **已填充**：5 源均 status=ok、raw_completeness=1（dapi 1488 / official 1316 / digimons_net 1331 / wikimon 1636 / digidb 341） |
+| schema `PRAGMA user_version` | 3 |
 
 ## 本次改造（T1–T9）
 
@@ -47,8 +44,10 @@
 |---|---|---|
 | `uv run ruff check .` | 0 | All checks passed（全仓 0 error，改造前基线 63 error） |
 | `uv run python -m pytest -q` | 0 | **152 passed** |
-| `uv run python scripts/validate_data.py` | 0 | 0 errors / 3 warnings / 4 info |
-| `uv run python scripts/verify_samples.py --n 50` | **1** | 随机 39/50 + 固定 16/16；**11 只随机抽样存在缺失字段**（多为扩展形态缺图/属性），诚实报错 |
+| `uv run python scripts/sync_data.py --sources dapi,official,digimons_net,wikimon,digidb` | 0 | **真实全量同步成功**：1736 实体、validation 0 errors、原子发布；`source_sync` 5 源全 ok |
+| 同一命令再次执行 | 0 | **增量 no-op**：所有 source unchanged，跳过重建，数据库保持 |
+| `uv run python scripts/validate_data.py` | 0 | 0 errors / 2 warnings / 4 info |
+| `uv run python scripts/verify_samples.py --n 50` | **1** | 随机 32/50 + 固定 16/16；**18 只随机抽样存在缺失字段**（扩展形态缺图/缺 zh 等，均为真实数据空缺，诚实报错） |
 | `npm ci` | 0 | — |
 | `npm run check` | 0 | 230 files, 0 errors / 0 warnings |
 | `npm run test` | 0 | 5 passed |
@@ -58,11 +57,13 @@
 | `git diff --check` | 0 | 无空白错误 |
 
 **代码验证以 hermetic fixture / mock 为主**：所有同步、API、Web、E2E、导出测试均不依赖
-真实网络 source 或手工预同步数据库。
+真实网络 source 或手工预同步数据库。上面的真实全量同步是在 T1 失败安全 + T4 增量改造
+完成后，用真实 source（缓存辅助）对完整管线做的端到端验证。
 
 ## 提交记录（本次改造）
 
 ```
+fa4f34c T9: delivery report, roadmap, schema docs reflect true state
 d26e226 T9: atomic exports, full domain coverage, markdown-safe conflict report
 196a44f T8: fail-safe image download (unified fetcher, atomic writes)
 10cbb53 T7: CI quality gates + zero-lint baseline
@@ -75,16 +76,18 @@ e2d7fad T3: exact-only identity, audited relations/resolver, game-stats upsert
 2ff4878 T1: fail-safe sync via candidate DB and atomic publish
 ```
 
+> 真实同步后还修正了一个测试隔离问题（`test_from_raw_missing_source_fails` 需把 raw 目录
+> 指向临时路径，避免被真实同步写入的 `data/raw/` 影响）——该修复已随工作区提交。
+
 ## 未验证项（DATA_NOT_VERIFIED）
 
-- **真实全量数据同步（`sync_data.py` 连真实 source）**：**DATA_NOT_VERIFIED** — 未执行。
-  当前数据库为改造前的 2026-08-14 快照。T1–T9 的代码路径已用 fixture/mock 测试验证，
-  但用改造后代码对真实 source 重新拉取并发布、以及 `source_sync` 表在真实同步中写入，
-  尚未在本机运行验证。
-- **verify_samples 的 11 只随机抽样缺失**：数据问题（多为扩展形态缺图/缺属性），非代码失败，
-  已由脚本如实报错（退出码 1）。
-- **图片实际下载**：`download_images.py` 已通过 mock 测试；真实联网批量下载未执行
-  （需访问 digi-api/wikimon，且当前库 download_status 已全部为 downloaded）。
+- **verify_samples 的随机抽样缺失字段**：数据问题（扩展形态缺图/缺 zh/缺属性等），非代码
+  失败，已由脚本如实报错（退出码 1）。其中 140 只官方形态缺图是**设计使然**（官方图片按
+  `docs/sources.md` 不下载，且这些形态不在 digi-api 的 1,488 中）。
+- **图片实际联网批量下载**：`download_images.py` 已通过 mock 测试；真实批量下载未执行
+  （需逐张访问 digi-api/wikimon，且当前库 download_status 已全部为 downloaded）。
+- **CI 工作流实际跑通**：`.github/workflows/ci.yml` 已编写并经 YAML 校验；本地无法执行
+  GitHub Actions，流水线运行结果未在本机验证（但其内每条命令均已在本机单独通过）。
 - **CI 工作流实际跑通**：`.github/workflows/ci.yml` 已编写并经 YAML 校验；因本地无法执行
   GitHub Actions，实际流水线运行结果未在本机验证。
 
@@ -113,9 +116,12 @@ uv run python scripts/download_images.py
 
 ## 已知限制（诚实声明）
 
-- 约 241 只扩展/冷门数码兽缺简体中文名（已系统探查各来源均无可靠资料；不编造）。
+- 缺简体中文名 / 缺日文名 / 缺主图的数码兽均为真实来源空缺，未编造（validate_data 报
+  warning：缺 zh 241 只、缺 ja 82 只；缺主图 248 只，其中 140 只官方形态按版权策略不下载官方图）。
 - 83 条音译名明确标 `transliteration` + unverified。
 - 部分更冷门的粉丝昵称不在数据中。
 - 游戏数值仅 Cyber Sleuth 一作。
-- 当前数据库的 `source_sync` 为空（改造前产物）；下次成功同步会填充。
+- `manual_review_queue` 有 **707** 条 open（改造前仅 1 条）：新增 resolver/review 逻辑如实上报
+  了此前被静默丢弃的未解析进化/关系目标、自环、缺 base 变体、未匹配游戏记录等；多为数据源
+  引用了不在当前数据集内的实体，需人工核验。
 - 公开部署尚未配置（环境变量：`DIGIDEX_DB`、`DIGIDEX_CORS_ORIGINS`）。

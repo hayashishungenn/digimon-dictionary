@@ -159,9 +159,13 @@ def test_rebuild_from_raw_records(monkeypatch, tmp_path, env_db):
     assert digimon_count(env_db) == len(RECORDS)
 
 
-def test_from_raw_missing_source_fails(env_db, tmp_path):
+def test_from_raw_missing_source_fails(env_db, tmp_path, monkeypatch):
     """--from-raw without persisted records for a requested source must fail
     cleanly (non-zero) instead of building an empty candidate."""
+    import pipeline.sources.base as base
+
+    # isolate from any real data/raw/ populated by a prior sync
+    monkeypatch.setattr(base, "RAW_SOURCES", {"dapi": tmp_path / "raw" / "dapi"})
     loader = make_loader({})
     rc = sync_data.run(["--sources", "dapi", "--from-raw"], loader=loader,
                        reports_dir=tmp_path / "reports")
