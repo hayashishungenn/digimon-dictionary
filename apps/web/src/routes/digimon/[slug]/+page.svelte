@@ -4,6 +4,7 @@
 	import PlaceholderImage from '$lib/components/PlaceholderImage.svelte';
 	import Badges, { levelLabel, attrLabel } from '$lib/components/Badges.svelte';
 	import EvolutionGraph from '$lib/components/EvolutionGraph.svelte';
+	import SectionHeader from '$lib/components/SectionHeader.svelte';
 	import { isFavorite, toggleFavorite } from '$lib/stores/favorites.svelte';
 
 	let { params } = $props();
@@ -193,7 +194,7 @@
 		</div>
 	</div>
 
-	<div class="section-title">基本信息</div>
+	<SectionHeader title="基本信息 Basic Data" code="DATA" />
 	<div class="basic-grid">
 		<div class="basic-cell"><div class="k">等级 Level</div><div class="v">
 			{levelLabel(data.level ?? 'unknown')}
@@ -242,7 +243,7 @@
 	</div>
 
 	{#if data.profile.zh_cn || data.profile.en || data.profile.ja}
-		<div class="section-title">简介 Profile</div>
+		<SectionHeader title="简介 Profile" code="PROF" />
 		<div class="profile-block">
 			{#if data.profile.zh_cn}
 				<p>{data.profile.zh_cn}</p>
@@ -255,10 +256,22 @@
 			{#if data.profile.ja}
 				<details><summary class="faint">日本語プロフィール</summary><p>{data.profile.ja}</p></details>
 			{/if}
+			<div class="profile-meta">
+				<span class="prov-status {data.profile.verified ? 'sourced' : 'unverified'}">
+					{data.profile.verified ? '已核验' : '来源待核验'}
+				</span>
+				{#if data.profile.source}<span class="mono faint">{data.profile.source}</span>{/if}
+				{#if data.profile.source_url}
+					<a class="profile-url" href={data.profile.source_url} target="_blank" rel="noopener">{data.profile.source_url}</a>
+				{/if}
+				{#if !data.profile.source && !data.profile.source_url}
+					<span class="no-data">无来源记录</span>
+				{/if}
+			</div>
 		</div>
 	{/if}
 
-	<div class="section-title">必杀技 / 技能 Skills</div>
+	<SectionHeader title="必杀技 / 技能 Skills" code="SKL" aside={data.skills.length ? `${data.skills.length} 项` : '暂无'} />
 	{#if data.skills.length > 0}
 		<div class="skill-list">
 			{#each data.skills as s}
@@ -268,9 +281,15 @@
 						{#if s.name_en}<span class="s-en">{s.name_en}</span>{/if}
 						{#if s.name_ja}<span class="s-ja">{s.name_ja}</span>{/if}
 						{#if s.is_signature}<span class="sig">代表技</span>{/if}
+						{#if !(s.name_zh_cn || s.name_en || s.name_ja)}
+							<span class="skill-gap" title="该技能在已接入来源中没有可展示的名称">缺名称</span>
+						{/if}
 					</div>
 					{#if s.description_zh_cn}<div class="s-desc">{s.description_zh_cn}</div>{/if}
 					{#if s.description_en && !s.description_zh_cn}<div class="s-desc dim">{s.description_en}</div>{/if}
+					{#if !(s.description_zh_cn || s.description_en || s.description_ja)}
+						<div class="s-desc no-data">无描述（来源未提供说明）</div>
+					{/if}
 				</div>
 			{/each}
 		</div>
@@ -278,7 +297,7 @@
 		<div class="no-data">暂无可靠技能资料</div>
 	{/if}
 
-	<div class="section-title">进化 Evolution</div>
+	<SectionHeader title="进化 Evolution" code="EVO" />
 	{#if evoLoading}
 		<div class="evo-status">
 			<span class="spinner" aria-label="进化图加载中"></span>
@@ -319,7 +338,7 @@
 	{/if}
 
 	{#if data.game_stats.length > 0}
-		<div class="section-title">游戏数据 Game Stats</div>
+		<SectionHeader title="游戏数据 Game Stats" code="GAME" aside={`${data.game_stats.length} 款游戏`} />
 		<div class="faint" style="font-size:12px;margin-bottom:8px">
 			世界观属性与游戏数值完全分离（规格 §10）。以下为该游戏内的独立数值。
 		</div>
@@ -341,7 +360,7 @@
 	{/if}
 
 	{#if data.relations.length > 0}
-		<div class="section-title">相关形态 Related Forms</div>
+		<SectionHeader title="相关形态 Related Forms" code="REL" aside={`${data.relations.length} 项`} />
 		<div class="evo-row-wrap">
 			{#each data.relations as r}
 				<a class="evo-node" href={`/digimon/${r.canonical_slug}`}>
@@ -356,12 +375,12 @@
 	{/if}
 
 	{#if data.name_origin}
-		<div class="section-title">名称来源 Name Origin</div>
+		<SectionHeader title="名称来源 Name Origin" code="ORG" />
 		<div class="profile-block">{data.name_origin}</div>
 	{/if}
 
 	{#if data.conflicts.length > 0}
-		<div class="section-title">字段冲突 Conflicts</div>
+		<SectionHeader title="字段冲突 Conflicts" code="CFL" aside={`${data.conflicts.length} 项`} />
 		<div class="conflict-list">
 			{#each data.conflicts as c}
 				<div class="conflict-item">
@@ -380,7 +399,7 @@
 	{/if}
 
 	{#if data.source.length > 0}
-		<div class="section-title">数据来源 Source</div>
+		<SectionHeader title="数据来源 Source" code="SRC" aside={`${data.source.length} 行`} />
 		<details>
 			<summary class="faint">展开查看字段级出处</summary>
 			<table class="source-table">
@@ -474,6 +493,29 @@
 		margin-top: 6px;
 		font-size: 13.5px;
 		color: var(--text-dim);
+	}
+	.skill-gap {
+		font-family: var(--mono);
+		font-size: 10px;
+		color: var(--warning);
+		border: 1px solid rgba(255, 200, 87, 0.4);
+		border-radius: 999px;
+		padding: 1px 7px;
+	}
+	.profile-meta {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px 12px;
+		margin-top: 12px;
+		padding-top: 10px;
+		border-top: 1px dashed var(--border);
+		font-size: 12px;
+	}
+	.profile-url {
+		font-family: var(--mono);
+		font-size: 11px;
+		overflow-wrap: anywhere;
 	}
 	.evo-row-wrap {
 		display: flex;
@@ -646,5 +688,9 @@
 	}
 	.prov-status.missing {
 		color: var(--text-faint);
+	}
+	.prov-status.unverified {
+		color: var(--warning);
+		border-color: rgba(255, 200, 87, 0.4);
 	}
 </style>

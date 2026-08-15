@@ -219,6 +219,18 @@ test('detail page shows representative primary evolution line', async ({ page })
 	await expect(page.locator('.evo-chain')).toContainText('Agumon');
 });
 
+test('detail page expresses data trust (profile verified, skill gaps, section codes)', async ({ page }) => {
+	await page.goto('/digimon/agumon');
+	// section headers carry terminal-style codes
+	await expect(page.getByText('DATA', { exact: true })).toBeVisible();
+	await expect(page.getByText('PROF', { exact: true })).toBeVisible();
+	await expect(page.getByText('SKL', { exact: true })).toBeVisible();
+	// fixture profile is unverified -> the status tag must say so, not 已核验
+	await expect(page.locator('.profile-meta .prov-status.unverified')).toContainText('来源待核验');
+	// fixture skills carry names but no descriptions -> explicit gap, never fake
+	await expect(page.getByText('无描述（来源未提供说明）').first()).toBeVisible();
+});
+
 test('narrow screen has no horizontal overflow', async ({ page }) => {
 	// 390×844 (iPhone 12-class) — the layout must not overflow horizontally.
 	await page.setViewportSize({ width: 390, height: 844 });
