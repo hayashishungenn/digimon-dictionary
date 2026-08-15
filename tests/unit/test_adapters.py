@@ -89,6 +89,9 @@ def test_wikimon_parse_page(tmp_path):
     assert "Greymon" in rec.extra.get("primary_to", [])
     # condition captured
     assert rec.conditions.get("to:Greymon") == "with or without the Crest"
+    # main image from the S2 infobox (S1-2) — stable Special:FilePath URL
+    assert rec.image_url == "https://wikimon.net/Special:FilePath/Agumon.jpg"
+    assert rec.image_page == "https://wikimon.net/File:Agumon.jpg"
 
 
 def test_wikimon_redirect_skipped():

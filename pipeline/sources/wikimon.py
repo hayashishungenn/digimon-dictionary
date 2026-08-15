@@ -164,6 +164,19 @@ class WikimonAdapter(SourceAdapter):
             if m:
                 rec.extra["drb_entry"] = m.group(1).strip()
 
+        # main image from the S2 infobox (`|image=Foo.jpg`). Wikimon images are
+        # not individually licensed; the pipeline only caches them locally (never
+        # committed — docs/sources.md). Special:FilePath redirects to the actual
+        # file, so the URL is stable without knowing MediaWiki's hashed upload
+        # path (S1-2).
+        img = (pd.get("image") or "").strip()
+        if img and not img.startswith("{"):
+            filename = img.split("|")[0].strip()
+            if filename:
+                safe = filename.replace(" ", "_")
+                rec.image_url = f"https://wikimon.net/Special:FilePath/{safe}"
+                rec.image_page = f"https://wikimon.net/File:{safe}"
+
         l1 = (pd.get("l1") or "").strip()
         if l1:
             rec.level_raw = l1
