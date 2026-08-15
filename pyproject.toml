@@ -31,6 +31,11 @@ download-images = "scripts.download_images:main"
 validate-data = "scripts.validate_data:main"
 export-dataset = "scripts.export_dataset:main"
 verify-samples = "scripts.verify_samples:main"
+backup-local = "scripts.backup_local:main"
+restore-local = "scripts.restore_local:main"
+inspect-snapshot = "scripts.inspect_snapshot:main"
+review-queue = "scripts.review_queue:main"
+diagnose = "scripts.diagnose:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

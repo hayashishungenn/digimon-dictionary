@@ -103,6 +103,33 @@ uv run python scripts/validate_data.py
 # 生成 data/reports/data-quality.json / .md
 ```
 
+## 本地维护与诊断（S1-4）
+
+日常使用只需记住少数命令：
+
+```bash
+# 1. 数据质量检查 + 抽样验证
+uv run python scripts/validate_data.py
+uv run python scripts/verify_samples.py --n 50 --seed 20260815
+
+# 2. 离线重建（从已保存 raw 快照，不联网）
+uv run python scripts/sync_data.py --sources dapi,official,digimons_net,wikimon,digidb --from-raw
+
+# 3. 启动后端 + 前端
+uv run uvicorn apps.api.main:app --reload   # http://localhost:8000/docs
+cd apps/web && npm run dev                  # http://localhost:5173
+
+# 4. 一键健康摘要（只读，不输出任何 Token/环境变量）
+uv run python scripts/diagnose.py           # 或 --json
+```
+
+Windows 一条命令启动两个进程：`powershell -ExecutionPolicy Bypass -File scripts\dev.ps1`
+（脚本会打印 API / WEB 的 PID，用 `Stop-Process -Id <PID> -Force` 停止；或关闭该 PowerShell
+窗口后清理仍占用 8000 / 5173 端口的进程）。
+
+备份 / 恢复 / 复核工作流见上方脚本表：`backup_local` / `restore_local` / `inspect_snapshot` /
+`review_queue`。
+
 ## 测试
 
 ```bash
