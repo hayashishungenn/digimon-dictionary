@@ -53,7 +53,17 @@ test('trilingual + partial + alias search resolve to the same real entity', asyn
 test('combined filter: 究极体 + 疫苗 on the real dataset', async ({ page }) => {
 	await page.goto('/');
 	await page.getByRole('tab', { name: '究极体', exact: true }).click();
-	await page.locator('select').first().selectOption('vaccine');
+	// apply the attribute filter — inline toolbar on desktop, mobile drawer on
+	// narrow viewports (the mobile project hides the inline toolbar, UI-P0-2)
+	const mobileBtn = page.getByRole('button', { name: '打开筛选面板' });
+	if (await mobileBtn.isVisible()) {
+		await mobileBtn.click();
+		const drawer = page.getByRole('dialog', { name: '筛选' });
+		await drawer.locator('select').first().selectOption('vaccine');
+		await drawer.getByRole('button', { name: '完成' }).click();
+	} else {
+		await page.locator('.filters select').first().selectOption('vaccine');
+	}
 	const count = page.locator('.result-count');
 	await expect(count).toContainText('共 ');
 	await expect(page.locator('[data-testid="digimon-card"]').first()).toBeVisible();

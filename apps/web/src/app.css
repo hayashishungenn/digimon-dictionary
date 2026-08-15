@@ -357,6 +357,20 @@ button {
 	background: currentColor;
 }
 
+.name-tag {
+	display: inline-block;
+	margin-left: 5px;
+	font-family: var(--mono);
+	font-size: 9px;
+	font-weight: 500;
+	color: var(--warning);
+	border: 1px solid rgba(255, 200, 87, 0.45);
+	border-radius: 4px;
+	padding: 0 4px;
+	vertical-align: 2px;
+	white-space: nowrap;
+}
+
 .lv-digi_egg { color: #9aa5b8; background: rgba(154, 165, 184, 0.12); }
 .lv-baby_i { color: #cdd6e6; background: rgba(205, 214, 230, 0.12); }
 .lv-baby_ii { color: #8fc8ff; background: rgba(143, 200, 255, 0.12); }
@@ -375,6 +389,31 @@ button {
 .at-free { color: #5ef2a0; background: rgba(94, 242, 160, 0.10); }
 .at-variable { color: #c95bff; background: rgba(201, 91, 255, 0.10); }
 .at-unknown { color: #7b8499; background: rgba(123, 132, 153, 0.10); }
+
+.filters {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	align-items: flex-end;
+	margin: 10px 0 16px;
+	padding: 14px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+.f-control {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+.f-label {
+	font-family: var(--mono);
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 1px;
+	color: var(--text-faint);
+}
 
 /* ---------- buttons ---------- */
 .btn {
@@ -512,18 +551,23 @@ button {
 
 .digimon-card .info {
 	padding: 10px 12px 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	min-width: 0;
 }
 
 .digimon-card .name-zh {
 	font-weight: 700;
 	font-size: 14.5px;
+	line-height: 1.25;
+	overflow-wrap: anywhere; /* long / no-space Chinese names never overflow */
 }
 
 .digimon-card .name-en {
 	font-family: var(--mono);
-	font-size: 11.5px;
+	font-size: 11px;
 	color: var(--text-dim);
-	margin-top: 1px;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -532,26 +576,53 @@ button {
 .digimon-card .name-ja {
 	color: var(--text-faint);
 	font-size: 11px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
-.name-tag {
-	display: inline-block;
-	margin-left: 5px;
-	font-family: var(--mono);
-	font-size: 9px;
-	font-weight: 500;
-	color: var(--warning);
-	border: 1px solid rgba(255, 200, 87, 0.45);
-	border-radius: 4px;
-	padding: 0 4px;
-	vertical-align: 2px;
-}
-
-.digimon-card .meta {
+.card-meta {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 5px;
+	align-items: center;
+	gap: 5px 6px;
 	margin-top: 8px;
+	row-gap: 6px;
+}
+
+.meta-badges {
+	display: inline-flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	min-width: 0;
+}
+
+.coll-badge {
+	font-family: var(--mono);
+	font-size: 9.5px;
+	font-weight: 600;
+	letter-spacing: 0.5px;
+	padding: 1px 6px;
+	border-radius: 4px;
+	white-space: nowrap;
+}
+.coll-badge.official {
+	color: var(--success);
+	border: 1px solid rgba(94, 242, 160, 0.35);
+}
+.coll-badge.extended {
+	color: var(--warning);
+	border: 1px solid rgba(255, 200, 87, 0.4);
+}
+
+.card-code {
+	margin-top: 6px;
+	font-size: 10px;
+	color: var(--text-faint);
+	letter-spacing: 0.5px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 /* ---------- placeholder image ---------- */

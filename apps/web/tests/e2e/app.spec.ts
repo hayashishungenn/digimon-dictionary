@@ -165,6 +165,52 @@ test('search 战暴 (fan abbreviation) resolves to WarGreymon', async ({ page })
 	expect(href).toBe('/digimon/war-greymon');
 });
 
+test('search clear button returns to the full list', async ({ page }) => {
+	await page.goto('/');
+	const search = page.getByRole('textbox', { name: '搜索数码兽' });
+	await search.fill('亚古兽');
+	await expect(page.getByText('搜索模式')).toBeVisible();
+	await page.getByRole('button', { name: '清除搜索' }).click();
+	await expect(page.getByText('搜索模式')).toHaveCount(0);
+	// back to the full (unfiltered) list with pagination controls
+	await expect(page.locator('[data-testid="digimon-card"]').first()).toBeVisible();
+});
+
+test('active filter conditions show removable chips and clear-all', async ({ page }) => {
+	await page.goto('/');
+	// apply a level filter via the tab row
+	await page.getByRole('tab', { name: '究极体', exact: true }).click();
+	const chips = page.locator('.active-filters .af-chip');
+	await expect(chips.first()).toContainText('等级');
+	// clear one condition via its chip
+	await chips.first().click();
+	await expect(page.locator('.active-filters .af-chip')).toHaveCount(0);
+	// apply again then clear-all
+	await page.getByRole('tab', { name: '究极体', exact: true }).click();
+	await expect(page.locator('.active-filters .af-chip')).toHaveCount(1);
+	await page.getByRole('button', { name: '清除全部' }).click();
+	await expect(page.locator('.active-filters')).toHaveCount(0);
+	// the level tab selection is reset
+	await expect(page.getByRole('tab', { name: '究极体', exact: true })).not.toHaveClass(/active/);
+});
+
+test('mobile filter drawer opens and applies filters', async ({ page }) => {
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto('/');
+	// desktop inline toolbar is hidden; the mobile 筛选 button opens a sheet
+	await expect(page.locator('.filters')).toBeHidden();
+	await page.getByRole('button', { name: '打开筛选面板' }).click();
+	const drawer = page.getByRole('dialog', { name: '筛选' });
+	await expect(drawer).toBeVisible();
+	// apply an attribute filter from inside the drawer
+	await drawer.locator('select').first().selectOption('vaccine');
+	await drawer.getByRole('button', { name: '完成' }).click();
+	await expect(page.getByText('搜索模式')).toHaveCount(0);
+	const chip = page.locator('.active-filters .af-chip').first();
+	await expect(chip).toContainText('疫苗种');
+	await expect(page.locator('[data-testid="digimon-card"]').first()).toBeVisible();
+});
+
 test('detail page shows representative primary evolution line', async ({ page }) => {
 	// Agumon has Wikimon primary-line edges (Koromon → Agumon → Greymon ...)
 	await page.goto('/digimon/agumon');
