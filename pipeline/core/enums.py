@@ -6,6 +6,7 @@ always preserved alongside (e.g. ``level_raw``) — mapping is never destructive
 """
 from __future__ import annotations
 
+import re as _re
 from enum import StrEnum
 
 
@@ -203,6 +204,7 @@ ATTRIBUTE_MAP: dict[str, Attribute] = {
     "unknown": Attribute.UNKNOWN,
     "no attribute": Attribute.UNKNOWN,
     "not applicable": Attribute.UNKNOWN,
+    "no data": Attribute.UNKNOWN,
     "无属性": Attribute.UNKNOWN,
     "無屬性": Attribute.UNKNOWN,
     "不明": Attribute.UNKNOWN,
@@ -219,7 +221,34 @@ def parse_level(value: str | None) -> Level:
     """
     if value is None:
         return Level.UNKNOWN
-    return LEVEL_MAP.get(value.strip().lower(), Level.UNKNOWN)
+    raw = value.strip()
+    direct = LEVEL_MAP.get(raw.lower(), Level.UNKNOWN)
+    if direct is not Level.UNKNOWN:
+        return direct
+    # compact fallback: handles unicode/variant spellings the exact map misses,
+    # e.g. "In-TrainingⅠ" -> Baby I, "完全体 (XW)" -> Perfect (Xros Wars tag).
+    return _LEVEL_COMPACT.get(_compact_level(raw), Level.UNKNOWN)
+
+
+# Unicode roman numerals (Baby I/II) → ASCII before compact matching.
+_LEVEL_ROMAN = str.maketrans({"Ⅰ": "i", "ⅰ": "i", "Ⅱ": "ii", "ⅱ": "ii"})
+
+
+def _compact_level(value: str) -> str:
+    s = value.strip().lower().translate(_LEVEL_ROMAN)
+    s = _re.sub(r"[（(]\s*xw\s*[）)]", "", s)  # strip Xros Wars annotation
+    return _re.sub(r"[\s\-_.,·]+", "", s)
+
+
+# Compact fallback map: every LEVEL_MAP key in compact form + explicit extras
+# that only appear as variant spellings in real source data.
+_LEVEL_COMPACT: dict[str, Level] = {_compact_level(k): v for k, v in LEVEL_MAP.items()}
+_LEVEL_COMPACT.update(
+    {
+        "intrainingi": Level.BABY_I,
+        "intrainingii": Level.BABY_II,
+    }
+)
 
 
 def parse_attribute(value: str | None) -> Attribute:

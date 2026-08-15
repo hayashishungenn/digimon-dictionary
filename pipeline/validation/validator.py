@@ -355,6 +355,121 @@ def validate(conn: sqlite3.Connection) -> dict[str, Any]:
         "cycles_supported": True,  # graph is designed to support cycles; not an error
     }
 
+    # --- field coverage audit (P0-2) -----------------------------------------
+    # Every digimon carries a per-field audit written at merge time: present /
+    # no_source (genuinely absent) / no_level / conflict / sync_failure. This
+    # lets the report separate documented data gaps from pipeline failures and
+    # gives verify_samples the evidence to distinguish them.
+    audit: dict[str, dict[str, int]] = {}
+    has_coverage = bool(
+        conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='field_coverage'"
+        ).fetchone()
+    )
+    if has_coverage:
+        for r in conn.execute(
+            "SELECT field, status, COUNT(*) c FROM field_coverage GROUP BY field, status"
+        ):
+            audit.setdefault(r["field"], {})[r["status"]] = r["c"]
+        incomplete = conn.execute(
+            """SELECT COUNT(*) FROM digimon d
+               WHERE (SELECT COUNT(*) FROM field_coverage fc WHERE fc.digimon_id = d.id) < 8"""
+        ).fetchone()[0]
+        if incomplete:
+            issue("warning", "incomplete_coverage_audit",
+                  f"{incomplete} digimon have an incomplete field_coverage audit")
+        sync_failures = sum(1 for per_field in audit.values() if per_field.get("sync_failure"))
+        if sync_failures:
+            issue("error", "field_coverage_sync_failure",
+                  f"{sync_failures} audited field(s) have sync_failure status — "
+                  f"a source had the data but the pipeline lost it")
+    else:
+        issue("warning", "coverage_audit_missing",
+              "field_coverage table is empty/absent — re-run sync_data to populate it")
+
+    # extra coverage dimensions (spec §49): type / field / first appearance /
+    # aliases / name origin — so the report is complete across the spec list.
+    def _cnt(sql: str) -> int:
+        return int(conn.execute(sql).fetchone()[0])
+
+    extra_coverage = {
+        "types": {
+            "digimon_with_types": _cnt("SELECT COUNT(DISTINCT digimon_id) FROM digimon_type"),
+            "digimon_without_types": _cnt(
+                "SELECT COUNT(*) FROM digimon d WHERE NOT EXISTS "
+                "(SELECT 1 FROM digimon_type dt WHERE dt.digimon_id=d.id)"
+            ),
+        },
+        "fields": {
+            "digimon_with_fields": _cnt("SELECT COUNT(DISTINCT digimon_id) FROM digimon_field"),
+            "digimon_without_fields": _cnt(
+                "SELECT COUNT(*) FROM digimon d WHERE NOT EXISTS "
+                "(SELECT 1 FROM digimon_field df WHERE df.digimon_id=d.id)"
+            ),
+        },
+        "first_appearance": {
+            "with_date": _cnt(
+                "SELECT COUNT(*) FROM digimon WHERE first_appearance_date IS NOT NULL "
+                "AND TRIM(first_appearance_date)!=''"
+            ),
+            "with_title": _cnt(
+                "SELECT COUNT(*) FROM digimon WHERE first_appearance_title IS NOT NULL "
+                "AND TRIM(first_appearance_title)!=''"
+            ),
+            "with_any": _cnt(
+                "SELECT COUNT(*) FROM digimon WHERE "
+                "(first_appearance_date IS NOT NULL AND TRIM(first_appearance_date)!='') "
+                "OR (first_appearance_title IS NOT NULL AND TRIM(first_appearance_title)!='')"
+            ),
+        },
+        "aliases": {
+            "total": _cnt("SELECT COUNT(*) FROM digimon_alias"),
+            "digimon_with_aliases": _cnt("SELECT COUNT(DISTINCT digimon_id) FROM digimon_alias"),
+        },
+        "name_origin": {
+            "with_name_origin": _cnt("SELECT COUNT(*) FROM digimon WHERE name_origin IS NOT NULL"),
+        },
+        "provenance": {
+            "total_rows": _cnt("SELECT COUNT(*) FROM provenance"),
+            "digimon_with_provenance": _cnt(
+                "SELECT COUNT(DISTINCT entity_id) FROM provenance WHERE entity_type='digimon'"
+            ),
+        },
+    }
+
+    # disposition of every warning/info: what it is, how many, what to do.
+    dispositions = {
+        "missing_zh_cn": {
+            "count": audit.get("zh_cn", {}).get("no_source", 0),
+            "disposition": "documented no_source gap (no ingested source provides a Chinese name)",
+        },
+        "missing_ja": {
+            "count": audit.get("ja", {}).get("no_source", 0),
+            "disposition": "documented no_source gap (no ingested source provides a Japanese name)",
+        },
+        "missing_level": {
+            "count": audit.get("level", {}).get("no_source", 0),
+            "disposition": "documented no_source gap",
+        },
+        "no_level": {
+            "count": audit.get("level", {}).get("no_level", 0),
+            "disposition": "raw values do not map to a canonical level (incl. 'No Level' entities)",
+        },
+        "conflict": {
+            "count": audit.get("level", {}).get("conflict", 0) + audit.get("attribute", {}).get("conflict", 0),
+            "disposition": "real unresolved source disagreement — in data_conflict + manual_review_queue",
+        },
+        "missing_image": {
+            "count": audit.get("image", {}).get("no_source", 0),
+            "disposition": "documented no_source gap (no ingested source carried an image URL; "
+                           "wikimon images not yet extracted — see P0-3)",
+        },
+        "sync_failure": {
+            "count": sum(1 for per_field in audit.values() if per_field.get("sync_failure")),
+            "disposition": "pipeline failure — a source had the field but it was lost; must be fixed",
+        },
+    }
+
     # --- fixed sample spot-check -----------------------------------------------
     sample_report: dict[str, Any] = {}
     for name in FIXED_SAMPLE:
@@ -401,7 +516,10 @@ def validate(conn: sqlite3.Connection) -> dict[str, Any]:
             },
             "skills": skill_stats,
         },
+        "coverage_audit": audit,
+        "coverage_extra": extra_coverage,
         "graph": graph_stats,
+        "dispositions": dispositions,
         "fixed_sample": sample_report,
     }
     return report
@@ -423,6 +541,25 @@ def to_markdown(report: dict[str, Any]) -> str:
     lines.append(f"- 技能：{c['skills']['total_skills']} 个，"
                  f"有技能数码兽 {c['skills']['digimon_with_skills']} 只")
     lines.append(f"- 进化边：{report['graph']['edges']} 条")
+    if report.get("coverage_audit"):
+        lines.append("")
+        lines.append("## 字段覆盖审计（field_coverage）")
+        audit = report["coverage_audit"]
+        for field in ("zh_cn", "en", "ja", "level", "attribute", "image", "skills", "profile"):
+            st = audit.get(field, {})
+            lines.append(
+                f"- {field}: present={st.get('present', 0)} / "
+                f"no_source={st.get('no_source', 0)} / "
+                f"no_level={st.get('no_level', 0)} / "
+                f"conflict={st.get('conflict', 0)} / "
+                f"sync_failure={st.get('sync_failure', 0)}"
+            )
+    if report.get("dispositions"):
+        lines.append("")
+        lines.append("## 问题处置（warnings/info 分类）")
+        for k, d in report["dispositions"].items():
+            if d["count"]:
+                lines.append(f"- {k} ({d['count']}): {d['disposition']}")
     lines.append("")
     if report["issues"]:
         lines.append("## 问题清单")

@@ -22,7 +22,7 @@ from pathlib import Path
 # the DB's `PRAGMA user_version`. Migrations are additive and never drop or
 # destroy data — an old DB is upgraded in place, so existing rows survive.
 # ---------------------------------------------------------------------------
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _migrate_v1(conn: sqlite3.Connection) -> None:
@@ -102,10 +102,37 @@ def _migrate_v3(conn: sqlite3.Connection) -> None:
             conn.execute(ddl)
 
 
+def _migrate_v4(conn: sqlite3.Connection) -> None:
+    """v3 -> v4: field-level coverage audit (P0-2).
+
+    Records, per digimon and audited field, whether the field is present,
+    genuinely absent across all ingested sources (`no_source`), explicitly
+    unclassifiable (`no_level`), a normalization miss (`unmapped`), a real
+    unresolved source conflict (`conflict`), or a pipeline failure
+    (`sync_failure`). verify_samples and the validator consult this to tell a
+    documented data gap from a sync/pipeline bug — never treating a silent
+    drop as a normal absence.
+    """
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS field_coverage (
+            digimon_id INTEGER NOT NULL REFERENCES digimon(id) ON DELETE CASCADE,
+            field      TEXT NOT NULL,   -- zh_cn|en|ja|level|attribute|image|skills|profile
+            status     TEXT NOT NULL,   -- present|no_source|no_level|unmapped|conflict|sync_failure
+            sources    TEXT,            -- comma-separated sources consulted
+            detail     TEXT,            -- evidence / reason
+            PRIMARY KEY (digimon_id, field)
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coverage_status ON field_coverage(status)"
+    )
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_v1,
     2: _migrate_v2,
     3: _migrate_v3,
+    4: _migrate_v4,
 }
 
 

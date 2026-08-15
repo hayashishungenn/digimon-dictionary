@@ -247,7 +247,9 @@ def test_validate_data_exit_code(monkeypatch, tmp_path):
     conn.close()
 
     monkeypatch.setattr(vd, "DB_PATH", db)
-    assert vd.main(["--json", str(tmp_path / "report.json")]) == 0
+    # reports must go to a temp dir, never the repo's real data/reports/
+    assert vd.main(["--json", str(tmp_path / "report.json"),
+                    "--reports-dir", str(tmp_path / "reports")]) == 0
 
     # inject an invalid enum -> validator errors -> non-zero exit
     conn = connect(db)
@@ -255,7 +257,7 @@ def test_validate_data_exit_code(monkeypatch, tmp_path):
     conn.commit()
     conn.close()
     monkeypatch.setattr(vd, "DB_PATH", db)
-    assert vd.main([]) != 0
+    assert vd.main(["--reports-dir", str(tmp_path / "reports")]) != 0
 
 
 # ---------------------------------------------------------------------------

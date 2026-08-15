@@ -590,9 +590,25 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
         _build_db(conn, records_by_source, sources, partial=partial,
                   run_id=run_id, source_stats=source_stats, failures=failures)
 
-        # candidate validation is a publication gate (T1.4 / T2.10)
-        report = _write_validation_report(candidate, reports_dir, args.skip_validation)
-        if report is not None and report["issue_counts"]["error"]:
+        # candidate validation is a publication gate (T1.4 / T2.10 / P0-2).
+        # --skip-validation is a diagnosis/dev flag only: it must never let an
+        # unvalidated candidate pass the publish gate, so the candidate is kept
+        # for inspection but the live DB is left untouched and we exit non-zero.
+        if args.skip_validation:
+            checkpoint_and_close(conn)
+            conn = None
+            cleanup_sidecars(candidate)
+            keep_candidate = True
+            logger.error(
+                "validation skipped (--skip-validation): candidate built at %s "
+                "for inspection but NOT published — an unvalidated database must "
+                "not be marked publishable. Live DB unchanged.",
+                candidate,
+            )
+            return 1
+
+        report = _write_validation_report(candidate, reports_dir, skip=False)
+        if report["issue_counts"]["error"]:
             logger.error(
                 "validation: %d errors; candidate NOT published (live DB unchanged)",
                 report["issue_counts"]["error"],

@@ -41,3 +41,31 @@ def test_cjk_detection():
     assert naming.is_japanese("アグモン")
     assert not naming.is_chinese("Agumon")
     assert not naming.is_japanese("Agumon")
+
+
+def test_parse_level_variants():
+    """Real source variants (P0-2): unicode roman numerals and Xros Wars tags
+    must map to the canonical level instead of falling through to unknown."""
+    from pipeline.core.enums import Level, parse_level
+
+    assert parse_level("Child") is Level.CHILD
+    assert parse_level("Rookie") is Level.CHILD
+    assert parse_level("In-TrainingⅠ") is Level.BABY_I
+    assert parse_level("In-TrainingⅡ") is Level.BABY_II
+    assert parse_level("Baby II") is Level.BABY_II
+    assert parse_level("完全体 (XW)") is Level.PERFECT
+    assert parse_level("成熟期（XW）") is Level.ADULT
+    assert parse_level("究极体 (XW)") is Level.ULTIMATE
+    # genuinely unclassifiable values stay unknown — never invented
+    assert parse_level("No Level") is Level.UNKNOWN
+    assert parse_level("Unknown") is Level.UNKNOWN
+    assert parse_level(None) is Level.UNKNOWN
+
+
+def test_parse_attribute_variants():
+    from pipeline.core.enums import Attribute, parse_attribute
+
+    assert parse_attribute("Vaccine") is Attribute.VACCINE
+    assert parse_attribute("疫苗种") is Attribute.VACCINE
+    assert parse_attribute("No Data") is Attribute.UNKNOWN
+    assert parse_attribute(None) is Attribute.UNKNOWN

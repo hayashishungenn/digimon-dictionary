@@ -159,3 +159,70 @@ def test_resolver_reports_unknown_and_self_refs(store_conn):
     # the resolved edge exists
     edges = store_conn.execute("SELECT COUNT(*) FROM evolution_edge").fetchone()[0]
     assert edges == 1
+
+
+# ---------------------------------------------------------------------------
+# field coverage audit (P0-2)
+# ---------------------------------------------------------------------------
+def _coverage(conn, slug, field):
+    row = conn.execute(
+        """SELECT fc.status, fc.detail FROM field_coverage fc
+           JOIN digimon d ON d.id = fc.digimon_id
+           WHERE d.canonical_slug = ? AND fc.field = ?""",
+        [slug, field],
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def test_coverage_present_for_complete_entity(store_conn):
+    rec = _rec("dapi", "1", "Agumon", level="Child", attr="Vaccine",
+               zh="亚古兽", ja="アグモン", skills=["Baby Flame"])
+    _upsert(store_conn, "agumon", rec)
+    for field in ("zh_cn", "en", "ja", "level", "attribute"):
+        assert _coverage(store_conn, "agumon", field)["status"] == "present"
+    # image has no source URL -> documented no_source, not a silent drop
+    assert _coverage(store_conn, "agumon", "image")["status"] == "no_source"
+
+
+def test_coverage_no_source_for_genuine_gap(store_conn):
+    # no record carries a zh name -> no_source (never invented)
+    rec = _rec("dapi", "1", "Agumon", level="Child")
+    _upsert(store_conn, "agumon", rec)
+    assert _coverage(store_conn, "agumon", "zh_cn")["status"] == "no_source"
+    assert _coverage(store_conn, "agumon", "level")["status"] == "present"
+
+
+def test_coverage_no_level_for_unmappable_raw(store_conn):
+    rec = _rec("dapi", "1", "Agumon", level="No Level")
+    _upsert(store_conn, "agumon", rec)
+    row = store_conn.execute("SELECT level FROM digimon WHERE canonical_slug='agumon'").fetchone()
+    assert row["level"] == "unknown"
+    assert _coverage(store_conn, "agumon", "level")["status"] == "no_level"
+
+
+def test_coverage_conflict_for_source_tie(store_conn):
+    """Two records disagree at the same source priority: canonical is unknown,
+    the disagreement lands in data_conflict, and the audit says conflict."""
+    a = _rec("official", "agumon", "Agumon", level="Champion", is_official=True)
+    b = _rec("official", "agumon2", "Agumon", level="Rookie", is_official=True)
+    entity = MatchedEntity(canonical_slug="agumon", records=[a, b])
+    CanonicalStore(store_conn).upsert_entity(entity)
+    store_conn.commit()
+    row = store_conn.execute("SELECT level FROM digimon WHERE canonical_slug='agumon'").fetchone()
+    assert row["level"] == "unknown"
+    assert store_conn.execute(
+        "SELECT COUNT(*) FROM data_conflict WHERE entity_type='digimon' AND field='level'"
+    ).fetchone()[0] == 1
+    assert _coverage(store_conn, "agumon", "level")["status"] == "conflict"
+
+
+def test_coverage_all_digimon_have_eight_rows(store_conn):
+    for slug, rec in (("agumon", _rec("dapi", "1", "Agumon", level="Child")),
+                      ("greymon", _rec("wikimon", "Greymon", "Greymon", level="Adult"))):
+        _upsert(store_conn, slug, rec)
+    n = store_conn.execute("SELECT COUNT(DISTINCT digimon_id) FROM field_coverage").fetchone()[0]
+    assert n == 2
+    per = store_conn.execute(
+        "SELECT digimon_id, COUNT(*) c FROM field_coverage GROUP BY digimon_id"
+    ).fetchall()
+    assert all(r["c"] == 8 for r in per)  # zh_cn/en/ja/level/attribute/image/skills/profile

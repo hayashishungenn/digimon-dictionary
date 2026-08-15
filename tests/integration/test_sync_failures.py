@@ -248,3 +248,21 @@ def test_sync_state_recovers_from_partial_write(tmp_path):
     state.save()
     assert json.loads(state_path.read_text("utf-8"))["dapi"]["content_hash"] == "xyz"
     assert not (tmp_path / ".sync_state.json.tmp").exists()
+
+
+# ---------------------------------------------------------------------------
+# --skip-validation must not bypass the publish gate (P0-2)
+# ---------------------------------------------------------------------------
+def test_skip_validation_never_publishes(env_db, tmp_path):
+    """--skip-validation is a diagnosis/dev flag: the candidate is built for
+    inspection but must NOT be published — an unvalidated database must not be
+    marked publishable."""
+    before = db_hash(env_db)
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    rc = sync_data.run(["--sources", "dapi", "--skip-validation"], loader=loader,
+                       reports_dir=tmp_path / "reports")
+    assert rc != 0  # signals "not ready to publish"
+    assert db_hash(env_db) == before  # live DB untouched
+    # candidate kept for inspection, sidecars cleaned
+    assert (tmp_path / "digidex.candidate.sqlite").exists()
+    assert candidate_sidecars(tmp_path) == []

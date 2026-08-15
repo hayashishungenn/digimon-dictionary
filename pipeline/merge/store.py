@@ -177,7 +177,132 @@ class CanonicalStore:
         self._merge_profiles(digimon_id, records)
         self._merge_first_appearance(digimon_id, records)
         self._merge_name_origin(digimon_id, records)
+        # record why each audited field is present or absent (P0-2): a missing
+        # field is a documented gap (no_source/no_level/conflict), never a
+        # silent drop. verify_samples and the validator consult this to tell a
+        # real data gap from a sync/pipeline bug.
+        self._record_coverage(digimon_id, records)
         return digimon_id
+
+    # ------------------------------------------------------------------ coverage
+    def _record_coverage(self, digimon_id: int, records: list[SourceDigimon]) -> None:
+        """Per-field coverage audit: present | no_source | no_level | conflict |
+        sync_failure.
+
+        Distinguishes "this field is genuinely absent across all ingested
+        sources" from "a source had it but the pipeline lost it". A raw value
+        that fails to map to a canonical enum is recorded as no_level; a real
+        unresolvable cross-source tie (already in data_conflict) as conflict.
+        """
+        conn = self.conn
+        row = conn.execute(
+            """SELECT name_zh_cn, name_en, name_ja, level, attribute, main_image,
+                      profile_zh_cn, profile_en, profile_ja
+               FROM digimon WHERE id = ?""",
+            [digimon_id],
+        ).fetchone()
+
+        def put(field: str, status: str, sources: list[str], detail: str | None = None) -> None:
+            conn.execute(
+                """INSERT OR REPLACE INTO field_coverage(digimon_id, field, status, sources, detail)
+                   VALUES(?,?,?,?,?)""",
+                [digimon_id, field, status,
+                 ",".join(sorted({s for s in sources if s})) or None, detail],
+            )
+
+        srcs = [r.source for r in records if r]
+
+        # names
+        for lang, col in (("zh_cn", "name_zh_cn"), ("en", "name_en"), ("ja", "name_ja")):
+            if row[col]:
+                put(lang, "present", srcs)
+            else:
+                provided = [
+                    r.source for r in records
+                    if any(n.language == lang and n.value and n.value.strip() for n in r.names)
+                ]
+                if provided:
+                    put(lang, "sync_failure", provided,
+                        "source provided a name but the merge produced no value")
+                else:
+                    put(lang, "no_source", srcs,
+                        "no ingested source provides a name in this language")
+
+        # level / attribute
+        for col, get_raw in (
+            ("level", lambda r: r.level_raw or r.level),
+            ("attribute", lambda r: r.attribute_raw or r.attribute),
+        ):
+            if row[col] and row[col] != "unknown":
+                put(col, "present", srcs)
+                continue
+            raw_sources = [r for r in records if get_raw(r)]
+            if not raw_sources:
+                put(col, "no_source", srcs, "no ingested source provides this field")
+                continue
+            raw_values = [str(get_raw(r)).strip() for r in raw_sources if str(get_raw(r)).strip()]
+            unresolved = conn.execute(
+                "SELECT COUNT(*) FROM data_conflict "
+                "WHERE entity_type='digimon' AND entity_id=? AND field=? AND resolved=0",
+                [digimon_id, col],
+            ).fetchone()[0]
+            if unresolved:
+                put(col, "conflict", [r.source for r in raw_sources],
+                    f"unresolved source disagreement (raw values: {raw_values[:4]})")
+            else:
+                put(col, "no_level", [r.source for r in raw_sources],
+                    f"raw values do not map to a canonical value: {raw_values[:4]}")
+
+        # image
+        if row["main_image"]:
+            put("image", "present", srcs)
+        else:
+            img = conn.execute(
+                """SELECT download_status FROM digimon_image
+                   WHERE digimon_id=? AND image_type='main_image'""",
+                [digimon_id],
+            ).fetchone()
+            img_srcs = [r.source for r in records if r.image_url]
+            if img and img["download_status"] == "failed":
+                put("image", "sync_failure", img_srcs, "image download failed")
+            elif img:
+                put("image", "sync_failure", img_srcs,
+                    f"image row exists but main_image empty (status {img['download_status']})")
+            elif img_srcs:
+                put("image", "sync_failure", img_srcs,
+                    "source provided an image URL but no image row was written")
+            else:
+                put("image", "no_source", srcs,
+                    "no ingested source carried an image URL (wikimon images not yet extracted)")
+
+        # skills
+        n_skills = conn.execute(
+            "SELECT COUNT(*) FROM digimon_skill WHERE digimon_id=?", [digimon_id]
+        ).fetchone()[0]
+        if n_skills:
+            put("skills", "present", srcs)
+        else:
+            sk_srcs = [r.source for r in records if r.skills]
+            if sk_srcs:
+                put("skills", "sync_failure", sk_srcs,
+                    "sources provided skills but none were written")
+            else:
+                put("skills", "no_source", srcs, "no ingested source provides skills")
+
+        # profile (any language)
+        has_profile = any(row[c] for c in ("profile_zh_cn", "profile_en", "profile_ja"))
+        if has_profile:
+            put("profile", "present", srcs)
+        else:
+            pr_srcs = [
+                r.source for r in records
+                if any((r.profile.get(lang) or "").strip() for lang in ("zh_cn", "en", "ja"))
+            ]
+            if pr_srcs:
+                put("profile", "sync_failure", pr_srcs,
+                    "sources provided a profile but none was written")
+            else:
+                put("profile", "no_source", srcs, "no ingested source provides a profile")
 
     # ---- canonical value selection (documented source priority) ------------
     @staticmethod
