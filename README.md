@@ -75,7 +75,7 @@ npm run dev                   # http://localhost:5173
 | `sync_data.py` | 完整 ETL：FETCH→RAW→NORMALIZE→MATCH→MERGE→VALIDATE→DB |
 | `validate_data.py` | 数据质量报告（data/reports/data-quality.json/.md） |
 | `verify_samples.py` | 抽样人工验证（随机 N 只 + 固定名单） |
-| `download_images.py` | 本地缓存图片到 data/images/（不提交 git） |
+| `download_images.py` | 本地缓存图片到 data/images/（不提交 git），并派生缩略图到 data/images/thumbs/ |
 | `export_dataset.py` | 导出 digimon.json / digimon.csv / digidex.sqlite |
 | `uv run uvicorn apps.api.main:app` | FastAPI 后端 |
 | `cd apps/web && npm run dev` | SvelteKit 前端 |
@@ -102,9 +102,10 @@ uv run python scripts/validate_data.py
 ## 测试
 
 ```bash
-uv run pytest                          # pipeline + API
+uv run pytest                          # pipeline + API（含真实 DB smoke test，缺库自动跳过）
 cd apps/web && npm run test            # 前端单元
-cd apps/web && npm run test:e2e        # Playwright E2E
+cd apps/web && npm run test:e2e        # Playwright E2E（hermetic fixture）
+cd apps/web && npm run test:e2e:realdb # Playwright E2E（真实 DB，桌面 + 窄屏；需先 sync_data）
 ```
 
 ## 数据库 Schema

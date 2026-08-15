@@ -39,6 +39,19 @@
 
 ### 待完成
 
-- [ ] 缩略图生成（download_images.py 本地缓存已完成，缩略图缩放未实现）
-- [ ] 进化图交互增强（拖动/缩放）
 - [ ] 公开部署（数据库已避免内置第三方版权图片；部署所需环境变量见 `apps/api/main.py` `DIGIDEX_DB` / `DIGIDEX_CORS_ORIGINS`）
+- [ ] 搜索/筛选/查询性能深化（P2-1）：真实规模下的 N+1 消除、索引确认、冷/热查询耗时回归
+- [ ] 独立扩展游戏数据（P2-2）：更多游戏版本的 game_digimon_stats / game_skill 接入（当前仅 Cyber Sleuth，`game_skill` 为空是合法状态）
+
+## 阶段三（发布前修复与后续建设，P0/P1 任务书）
+
+### 已完成（2026-08-15，见 `docs/delivery-report.md`）
+
+- [x] **P0-0 基线 + 真实数据验收入口**：`tests/integration/test_real_db_smoke.py` 真实 DB smoke test（缺库自动跳过）。
+- [x] **P0-1 进化图规模/性能**：有界 BFS（节点 500 / 边 2500 预算 + `truncated`/`dropped_edges` 可解释状态），depth 仅 1–3，O(E²) 去重→O(1)，批量节点加载；真实 DB Agumon depth=3 由 ~43s → ~44ms；前端加载/截断/回到浅深度。
+- [x] **P0-2 抽样验证 + 质量门禁**：`field_coverage` 审计（present/no_source/no_level/conflict/sync_failure）区分真实缺失与同步失败；`verify_samples` 可复现 seed + 分类 + JSON 审计报告；`parse_level` 补齐真实变体（In-TrainingⅠ/Ⅱ、XW 中文）；`--skip-validation` 不再绕过发布闸门。
+- [x] **P0-3 图片/缩略图/首次登场**：Pillow 本地缩略图派生缓存（`data/images/thumbs/`，1488 张），主图/缩略图元数据（尺寸/sha256/content-type/抓取时间/失败原因），`/api/images/{id}/{kind}` 服务端点，前端列表用缩略图、详情用主图 + 图片状态；首次登场有日期即显示（标题缺失显示“标题未记录”）。
+- [x] **P1-1 同步失败安全/raw/checkpoint/历史**：`source_sync` 按 (source, run_id) 保留每次运行历史 + `sync_run` 表；raw 原子写；`run_id` 含微秒；WAL checkpoint 失败拒绝发布；图片阶段失败返回非零；source 集合新增/删除均识别。
+- [x] **P1-2 字段级 provenance/冲突/清洁文本**：递归 wikitext 清洗器（语言标记/词源模板/链接/ref 渲染），嵌套模板不再截断；`provenance.run_id`；每实体 content_hash 覆盖全部规范化字段；关系边记录真实来源；未解析模板保留原文并进 review queue；详情页来源表带“有来源/冲突/缺失”状态。
+- [x] **P1-3 真实 DB 浏览器/窄屏验收**：`playwright.realdb.config.ts` + `tests/e2e-realdb/`（18/18 通过，桌面 + 窄屏），覆盖三语/简称/部分搜索、组合筛选、Agumon 详情、进化 depth2 截断、组织页、缺图占位、无横向溢出、键盘导航。
+- [x] **P1-4 报告/文档刷新**：`docs/delivery-report.md` 数字与真实数据库一致。
