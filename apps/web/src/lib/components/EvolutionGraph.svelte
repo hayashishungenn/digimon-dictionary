@@ -158,6 +158,9 @@
 		</div>
 	{:else}
 		{#if graph.edges.length > 0}
+			{#if (graph.node_count ?? 0) > 300}
+				<div class="evo-hint" role="status">图谱较大（{graph.node_count} 节点 / {graph.edge_count} 边），可滚动、缩放查看。</div>
+			{/if}
 			<EvolutionSvg {graph} {centerId} />
 		{:else}
 			<div class="no-data">没有可展示的进化关系</div>
@@ -212,5 +215,14 @@
 	.n-block {
 		display: flex;
 		flex-direction: column;
+	}
+	.evo-hint {
+		font-size: 12px;
+		color: var(--text-dim);
+		background: rgba(53, 208, 255, 0.06);
+		border: 1px solid rgba(53, 208, 255, 0.25);
+		border-radius: var(--radius-sm);
+		padding: 8px 12px;
+		margin-bottom: 8px;
 	}
 </style>

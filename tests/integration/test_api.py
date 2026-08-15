@@ -309,8 +309,11 @@ def test_relations_express_direction(client):
 def test_evolution_depth_and_bounds(client):
     # depth=0 rejected (ge=1)
     assert client.get("/api/digimon/agumon/evolution", params={"depth": 0}).status_code == 422
-    # depth > 4 rejected (le=4)
+    # depth > 3 rejected (le=3, P0-1: no depth=4 explosion)
+    assert client.get("/api/digimon/agumon/evolution", params={"depth": 4}).status_code == 422
     assert client.get("/api/digimon/agumon/evolution", params={"depth": 5}).status_code == 422
+    # non-integer depth rejected
+    assert client.get("/api/digimon/agumon/evolution", params={"depth": "x"}).status_code == 422
     # depth=2 returns a neighbourhood with edges; every edge node is present
     g = client.get("/api/digimon/agumon/evolution", params={"depth": 2}).json()
     assert g["center"] is not None
@@ -318,6 +321,38 @@ def test_evolution_depth_and_bounds(client):
     for e in g["edges"]:
         # JSON serializes dict keys to strings; the frontend indexes with String()
         assert str(e["from"]) in g["nodes"] and str(e["to"]) in g["nodes"]
+
+
+def test_evolution_response_has_budget_metadata(client):
+    """P0-1: the response exposes explicit depth/counts/truncation so the UI can
+    tell the user when part of the graph was dropped."""
+    g = client.get("/api/digimon/agumon/evolution", params={"depth": 1}).json()
+    assert g["node_count"] == len(g["nodes"])
+    assert g["edge_count"] == len(g["edges"])
+    assert g["depth"] >= 1
+    assert isinstance(g["truncated"], bool)
+    assert isinstance(g["dropped_edges"], int)
+    # center always present
+    assert str(g["center"]) in g["nodes"]
+
+
+def test_evolution_truncates_at_budget(client):
+    """A pathological hub must not return an unbounded graph: when the node/edge
+    budget is hit the server stops and marks the response truncated."""
+    from apps.api.queries import EVOLUTION_EDGE_BUDGET, EVOLUTION_NODE_BUDGET
+
+    g = client.get("/api/digimon/agumon/evolution", params={"depth": 3}).json()
+    assert g["edge_count"] <= EVOLUTION_EDGE_BUDGET
+    assert g["node_count"] <= EVOLUTION_NODE_BUDGET
+    if g["truncated"]:
+        assert g["dropped_edges"] > 0
+        # every edge endpoint resolves to a node in the partial graph
+        for e in g["edges"]:
+            assert str(e["from"]) in g["nodes"] and str(e["to"]) in g["nodes"]
+
+
+def test_evolution_unknown_slug_404(client):
+    assert client.get("/api/digimon/does-not-exist/evolution", params={"depth": 1}).status_code == 404
 
 
 def test_list_bounds(client):

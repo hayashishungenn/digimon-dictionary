@@ -210,7 +210,11 @@ def search(
 # sub-resources
 # --------------------------------------------------------------------------
 @app.get("/api/digimon/{ident}/evolution")
-def digimon_evolution(ident: str, depth: int = Query(default=1, ge=1, le=4)) -> dict[str, Any]:
+def digimon_evolution(ident: str, depth: int = Query(default=1, ge=1, le=3)) -> dict[str, Any]:
+    """Local evolution neighbourhood. depth is bounded to 1..3 (P0-1): the
+    server rejects anything outside that range so a request can never ask the
+    traversal to blow up. Large graphs are additionally budgeted server-side
+    and marked ``truncated`` — never returned in full."""
     conn = _db()
     try:
         base = queries.get_digimon(conn, ident)

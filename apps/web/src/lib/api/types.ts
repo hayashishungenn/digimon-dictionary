@@ -124,8 +124,13 @@ export interface EvolutionEdge {
 
 export interface EvolutionGraph {
 	center: number;
+	depth: number;
 	nodes: Record<string, EvolutionNode>;
 	edges: EvolutionEdge[];
+	node_count: number;
+	edge_count: number;
+	truncated: boolean;
+	dropped_edges: number;
 }
 
 export interface Relation {

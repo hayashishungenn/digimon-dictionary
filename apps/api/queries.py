@@ -284,55 +284,111 @@ def get_skills(conn: sqlite3.Connection, digimon_id: int) -> list[dict[str, Any]
     ]
 
 
+# Evolution graph bounds (P0-1): the API only ever returns a budgeted
+# neighbourhood, never an unbounded full graph. depth is validated at the API
+# layer to 1..3; these budgets cap the worst case so a hub digimon cannot blow
+# up the response or the renderer.
+EVOLUTION_MAX_DEPTH = 3
+EVOLUTION_NODE_BUDGET = 500
+EVOLUTION_EDGE_BUDGET = 2500
+
+_NODE_COLUMNS = "id, canonical_slug, name_zh_cn, name_en, name_ja, level, main_image"
+
+
 def get_evolution(conn: sqlite3.Connection, digimon_id: int, depth: int = 1) -> dict[str, Any]:
     """Return the local evolution neighbourhood up to `depth` hops.
 
-    shape: {"nodes": [...], "edges": [...], "center": id}
+    Bounded BFS: traversal expands breadth-first from the center so the closest
+    relationships are always returned first. Node/edge budgets cap the worst
+    case; when a budget is hit the traversal stops and ``truncated`` is true,
+    with explicit counts so the UI can tell the user part of the graph was
+    dropped (never a silent omission, never an unrenderable full graph).
+
+    shape::
+        {"center": id, "depth": n, "nodes": {...}, "edges": [...],
+         "node_count": n, "edge_count": n, "truncated": bool,
+         "dropped_edges": n}   # unique edges encountered but not included
     """
-    nodes: dict[int, dict[str, Any]] = {}
+    depth = max(1, min(int(depth), EVOLUTION_MAX_DEPTH))
     edges: list[dict[str, Any]] = []
-    frontier = {digimon_id}
-    visited: set[int] = set()
-    for _ in range(depth):
-        if not frontier:
-            break
-        visited |= frontier
-        ids = list(frontier)
+    seen_edges: set[tuple[int, int, str]] = set()
+    node_ids: set[int] = {digimon_id}
+    visited: set[int] = {digimon_id}
+    frontier: set[int] = {digimon_id}
+    truncated = False
+    dropped_edges = 0
+    traversed = 0
+
+    while frontier and traversed < depth and not truncated:
+        ids = sorted(frontier)
         placeholders = ",".join("?" * len(ids))
         rows = conn.execute(
             f"""SELECT e.id, e.from_digimon_id, e.to_digimon_id, e.evolution_type,
                        e.condition, e.is_primary_line, e.source
                 FROM evolution_edge e
-                WHERE e.from_digimon_id IN ({placeholders}) OR e.to_digimon_id IN ({placeholders})""",
+                WHERE e.from_digimon_id IN ({placeholders}) OR e.to_digimon_id IN ({placeholders})
+                ORDER BY e.id""",  # stable order -> reproducible graph
             [*ids, *ids],
         ).fetchall()
         next_frontier: set[int] = set()
         for e in rows:
-            edge = {
-                "id": e["id"],
-                "from": e["from_digimon_id"],
-                "to": e["to_digimon_id"],
-                "evolution_type": e["evolution_type"],
-                "condition": e["condition"],
-                "is_primary_line": bool(e["is_primary_line"]),
-                "source": e["source"],
-            }
-            if (e["from_digimon_id"], e["to_digimon_id"], e["evolution_type"]) not in {
-                (x["from"], x["to"], x["evolution_type"]) for x in edges
-            }:
-                edges.append(edge)
-            for node_id in (e["from_digimon_id"], e["to_digimon_id"]):
-                if node_id not in visited and node_id not in next_frontier and node_id != digimon_id:
-                    next_frontier.add(node_id)
+            key = (e["from_digimon_id"], e["to_digimon_id"], e["evolution_type"])
+            if key in seen_edges:
+                continue
+            seen_edges.add(key)
+            new_nodes = [nid for nid in (e["from_digimon_id"], e["to_digimon_id"]) if nid not in visited]
+            if len(edges) >= EVOLUTION_EDGE_BUDGET or (
+                new_nodes and len(node_ids) >= EVOLUTION_NODE_BUDGET
+            ):
+                truncated = True
+                dropped_edges += 1
+                continue
+            edges.append(
+                {
+                    "id": e["id"],
+                    "from": e["from_digimon_id"],
+                    "to": e["to_digimon_id"],
+                    "evolution_type": e["evolution_type"],
+                    "condition": e["condition"],
+                    "is_primary_line": bool(e["is_primary_line"]),
+                    "source": e["source"],
+                }
+            )
+            for nid in new_nodes:
+                visited.add(nid)
+                node_ids.add(nid)
+                next_frontier.add(nid)
+        traversed += 1
         frontier = next_frontier
-    for node_id in {x["from"] for x in edges} | {x["to"] for x in edges} | {digimon_id}:
-        n = conn.execute(
-            "SELECT id, canonical_slug, name_zh_cn, name_en, name_ja, level, main_image FROM digimon WHERE id = ?",
-            [node_id],
-        ).fetchone()
-        if n:
-            nodes[node_id] = dict(n)
-    return {"center": digimon_id, "nodes": nodes, "edges": edges}
+
+    # batch-load node metadata in one query (no per-node N+1)
+    nodes: dict[int, dict[str, Any]] = {}
+    if node_ids:
+        node_list = sorted(node_ids)
+        placeholders = ",".join("?" * len(node_list))
+        nodes = {
+            r["id"]: dict(r)
+            for r in conn.execute(
+                f"SELECT {_NODE_COLUMNS} FROM digimon WHERE id IN ({placeholders})",
+                node_list,
+            ).fetchall()
+        }
+    # an edge is only kept when both endpoints resolved; any missing node (e.g.
+    # a deleted entity) would break the graph, so drop such edges explicitly.
+    kept: list[dict[str, Any]] = []
+    for e in edges:
+        if e["from"] in nodes and e["to"] in nodes:
+            kept.append(e)
+    return {
+        "center": digimon_id,
+        "depth": traversed,
+        "nodes": nodes,
+        "edges": kept,
+        "node_count": len(nodes),
+        "edge_count": len(kept),
+        "truncated": truncated,
+        "dropped_edges": dropped_edges + (len(edges) - len(kept)),
+    }
 
 
 def get_relations(conn: sqlite3.Connection, digimon_id: int) -> list[dict[str, Any]]:

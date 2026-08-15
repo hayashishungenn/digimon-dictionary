@@ -14,6 +14,9 @@
 	let error = $state<string | null>(null);
 
 	let evoDepth = $state(1);
+	let evoLoading = $state(false);
+	let evoError = $state<string | null>(null);
+	const MAX_EVO_DEPTH = 3;
 
 	// Request sequence token: when the route slug changes quickly, only the
 	// newest detail response may win (T6.1 / T6.3).
@@ -28,6 +31,7 @@
 			if (my !== reqSeq) return; // stale detail — drop it
 			data = d;
 			evoDepth = 1;
+			evoError = null;
 		} catch (e) {
 			if (my !== reqSeq) return;
 			error = e instanceof Error ? e.message : '加载失败';
@@ -38,14 +42,36 @@
 
 	async function expandEvo() {
 		const cur = data;
-		if (!cur) return;
-		const next = Math.min(evoDepth + 1, 4);
+		if (!cur || evoLoading || evoDepth >= MAX_EVO_DEPTH) return;
+		evoLoading = true;
+		evoError = null;
+		const next = evoDepth + 1;
 		try {
 			const g = await api.evolution(slug, next);
 			evoDepth = next;
 			data = { ...cur, evolution: g };
-		} catch {
-			/* keep current depth on failure */
+		} catch (e) {
+			// keep current depth on failure, surface the error so the user can retry
+			evoError = e instanceof Error ? e.message : '进化图加载失败';
+		} finally {
+			evoLoading = false;
+		}
+	}
+
+	// collapse back to a shallower depth when the graph was truncated or too large
+	async function setDepth(next: number) {
+		const cur = data;
+		if (!cur || evoLoading || next < 1 || next >= evoDepth) return;
+		evoLoading = true;
+		evoError = null;
+		try {
+			const g = await api.evolution(slug, next);
+			evoDepth = next;
+			data = { ...cur, evolution: g };
+		} catch (e) {
+			evoError = e instanceof Error ? e.message : '进化图加载失败';
+		} finally {
+			evoLoading = false;
 		}
 	}
 
@@ -215,15 +241,44 @@
 	{/if}
 
 	<div class="section-title">进化 Evolution</div>
+	{#if evoLoading}
+		<div class="evo-status">
+			<span class="spinner" aria-label="进化图加载中"></span>
+			<span class="faint">正在加载深度 {evoDepth + 1} 的进化关系…</span>
+		</div>
+	{:else if evoError}
+		<div class="error-box" role="alert">{evoError}</div>
+		<div class="evo-status">
+			<button class="btn" onclick={expandEvo}>重试展开</button>
+		</div>
+	{/if}
+	{#if data.evolution.truncated}
+		<div class="evo-status warn" role="status">
+			进化关系规模较大，仅展示部分关系：{data.evolution.node_count} 节点 / {data.evolution.edge_count} 边，另有 {data.evolution.dropped_edges} 条未展示。
+			建议使用较浅深度查看。
+		</div>
+	{/if}
 	<EvolutionGraph
 		graph={data.evolution}
 		centerId={data.id}
-		canExpand={evoDepth < 4}
+		canExpand={evoDepth < MAX_EVO_DEPTH && !evoLoading}
 		onExpand={expandEvo}
 	/>
 	<div class="faint mono" style="font-size:11px;margin-top:6px">
-		当前深度 {evoDepth} / 最大 4
+		当前深度 {data.evolution.depth ?? evoDepth} / 最大 {MAX_EVO_DEPTH} ·
+		{data.evolution.node_count ?? 0} 节点 / {data.evolution.edge_count ?? 0} 边
+		{#if data.evolution.truncated}
+			（截断）
+		{/if}
 	</div>
+	{#if evoDepth > 1}
+		<div class="evo-status">
+			<button class="btn" onclick={() => setDepth(1)}>回到深度 1</button>
+			{#if evoDepth === 3}
+				<button class="btn" onclick={() => setDepth(2)}>回到深度 2</button>
+			{/if}
+		</div>
+	{/if}
 
 	{#if data.game_stats.length > 0}
 		<div class="section-title">游戏数据 Game Stats</div>
@@ -464,5 +519,23 @@
 		border: 1px solid rgba(255, 200, 87, 0.4);
 		border-radius: 999px;
 		padding: 1px 8px;
+	}
+	.evo-status {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		font-size: 12.5px;
+		margin: 8px 0;
+	}
+	.evo-status .spinner {
+		width: 14px;
+		height: 14px;
+	}
+	.evo-status.warn {
+		color: var(--gold);
+		background: rgba(255, 200, 87, 0.08);
+		border: 1px solid rgba(255, 200, 87, 0.3);
+		border-radius: var(--radius-sm);
+		padding: 8px 12px;
 	}
 </style>
