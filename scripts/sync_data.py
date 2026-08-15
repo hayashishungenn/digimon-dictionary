@@ -22,6 +22,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 import os
 import shutil
@@ -31,14 +32,17 @@ from pathlib import Path
 
 from pipeline.core.config import DB_PATH, REPORTS_DIR
 from pipeline.core.lock import SyncLockError, sync_lock
+from pipeline.core.manifest import build_manifest, manifest_path_for, write_manifest
 from pipeline.core.request import Fetcher
 from pipeline.core.schema import (
+    SCHEMA_VERSION,
     checkpoint_and_close,
     cleanup_db_files,
     cleanup_sidecars,
     connect,
     connect_readonly,
     create_schema,
+    verify_integrity,
 )
 from pipeline.core.sync_state import SyncState
 from pipeline.matching.matcher import Matcher
@@ -123,6 +127,14 @@ def _load_fan_aliases(conn) -> None:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _sha256(path: Path) -> str | None:
+    """SHA-256 of a file (None when unreadable/absent) — used by the manifest."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
 
 
 def _count_existing(db_path: Path) -> int:
@@ -256,20 +268,25 @@ def _write_source_sync(conn: sqlite3.Connection, run_id: str,
                        records_by_source: dict[str, list],
                        source_stats: dict[str, dict],
                        failures: dict[str, Exception],
-                       *, partial: bool = False, note: str | None = None) -> None:
+                       *, partial: bool = False, note: str | None = None,
+                       started_at: str | None = None,
+                       snapshot_date: str | None = None) -> None:
     """Record every source's real status for this run, preserving history (P1-1).
 
     source_sync is keyed by (source, run_id), so each run appends new rows
     instead of overwriting — a specific version can be reconstructed and
-    audited. A `sync_run` row carries the run-level metadata.
+    audited. A `sync_run` row carries the run-level metadata using the SAME
+    run_id and the run's actual started_at / finished_at / snapshot_date
+    (S0-1: `sync_run.started_at` must not be empty).
     """
     finished = _now()
     run_status = "failed" if failures else ("partial" if partial else "ok")
     conn.execute(
         """INSERT OR REPLACE INTO sync_run(run_id, started_at, finished_at, status, sources, note, snapshot_date)
            VALUES(?,?,?,?,?,?,?)""",
-        [run_id, None, finished, run_status,
-         ",".join(sorted(set(records_by_source) | set(failures))), note, _now()[:10]],
+        [run_id, started_at, finished, run_status,
+         ",".join(sorted(set(records_by_source) | set(failures))), note,
+         snapshot_date or _now()[:10]],
     )
     for name, records in records_by_source.items():
         st = source_stats.get(name, {})
@@ -301,11 +318,13 @@ def _write_source_sync(conn: sqlite3.Connection, run_id: str,
 def _build_db(conn: sqlite3.Connection, records_by_source: dict[str, list],
               sources: list[str], *, partial: bool, run_id: str | None = None,
               source_stats: dict[str, dict] | None = None,
-              failures: dict[str, Exception] | None = None) -> None:
+              failures: dict[str, Exception] | None = None,
+              started_at: str | None = None) -> str | None:
     """MATCH + MERGE + edges + relations + game stats + snapshot on `conn`.
 
     `conn` is a candidate database; every destructive step is safe because the
-    live DB is never touched.
+    live DB is never touched. Returns the snapshot_date the run recorded (used
+    to keep sync_run / publish manifest consistent with the snapshot row).
     """
     matcher = Matcher()
     order = [s for s in ["dapi", "digimons_net", "official", "wikimon"] if s in records_by_source]
@@ -397,13 +416,20 @@ def _build_db(conn: sqlite3.Connection, records_by_source: dict[str, list],
     if partial:
         notes += " partial=true"
     snap = store.write_snapshot(notes=notes)
-    logger.info("snapshot: %s", snap)
+    snap_date = conn.execute(
+        "SELECT snapshot_date FROM snapshot ORDER BY id DESC LIMIT 1"
+    ).fetchone()["snapshot_date"]
+    logger.info("snapshot: %s (date %s)", snap, snap_date)
     conn.commit()
 
     # per-source sync status is queryable in the candidate (T4.1); history is
-    # preserved per (source, run_id) with a sync_run row (P1-1)
+    # preserved per (source, run_id) with a sync_run row (P1-1). sync_run uses
+    # the run's real started_at and the snapshot's date (S0-1).
     _write_source_sync(conn, run_id or "?", records_by_source, source_stats or {},
-                       failures or {}, partial=partial, note=f"build of sources={sources}")
+                       failures or {}, partial=partial,
+                       note=f"build of sources={sources}",
+                       started_at=started_at, snapshot_date=snap_date)
+    return snap_date
 
 
 def _preserve_review_history(db_path: Path, conn: sqlite3.Connection) -> None:
@@ -496,17 +522,20 @@ def _publish(candidate: Path, target: Path) -> None:
 
 
 def _update_state(state: SyncState, records_by_source: dict[str, list],
-                  sources: list[str]) -> None:
+                  sources: list[str], *, run_id: str | None = None,
+                  snapshot_date: str | None = None) -> None:
     """Record per-source hashes/counts ONLY after a successful publish.
 
     The stored hash covers the full normalized payload, so "unchanged" can only
-    mean the source content is genuinely identical (T4.2 / T4.3).
+    mean the source content is genuinely identical (T4.2 / T4.3). Also records
+    which run / snapshot produced this state so a future reconcile can confirm
+    the state corresponds to the DB's latest run (S0-1).
     """
     for name, records in records_by_source.items():
         digest = _records_hash(records)
         state.set(name, content_hash=digest, payload_hash=digest,
                   last_seen_at=_now(), records=len(records))
-    state.set("sync_data", sources=sources)
+    state.set("sync_data", sources=sources, run_id=run_id, snapshot_date=snapshot_date)
 
 
 def _write_validation_report(db_path: Path, reports_dir: Path | None, skip: bool) -> dict | None:
@@ -565,6 +594,7 @@ def run(argv: list[str] | None = None, *, loader=None, reports_dir: Path | None 
     if args.force and not _clear_http_cache(cache_dir, db_path.parent):
         return 1
 
+    started_at = _now()  # run-level start (sync_run.started_at, S0-1)
     run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f") + f"-{os.getpid():x}"
     # only persist raw snapshots for the real loader (tests inject fake adapters)
     persist_raw = loader is None
@@ -572,18 +602,109 @@ def run(argv: list[str] | None = None, *, loader=None, reports_dir: Path | None 
         with sync_lock(db_path.parent / ".sync.lock"):
             return _run_locked(args, sources, db_path, candidate, cache_dir,
                                state, loader or load_source, reports_dir or REPORTS_DIR,
-                               run_id, persist_raw)
+                               run_id, persist_raw, started_at)
     except SyncLockError as exc:
         logger.error("%s", exc)
         return 1
 
 
+def _backfill_manifest(db_path: Path, state: SyncState, reports_dir: Path,
+                       sources: list[str]) -> None:
+    """Write a publish manifest for an already-current database that predates
+    the manifest system (S0-1).
+
+    Runs on the incremental no-op path so a DB published before manifests
+    existed still has a durable publish record, which backup/restore rely on.
+    No-op: skips when a manifest already exists.
+    """
+    from pipeline.core.manifest import manifest_path_for, read_manifest, write_manifest
+
+    mpath = manifest_path_for(db_path)
+    if read_manifest(mpath) is not None:
+        return
+    run_id = state.get("sync_data").get("run_id")
+    snap_date = state.get("sync_data").get("snapshot_date")
+    if not snap_date:
+        try:
+            conn = connect_readonly(db_path)
+            try:
+                row = conn.execute(
+                    "SELECT snapshot_date FROM snapshot ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                snap_date = row["snapshot_date"] if row else _now()[:10]
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            snap_date = _now()[:10]
+    manifest = build_manifest(
+        run_id=run_id or f"backfill-{_now()}",
+        snapshot_date=snap_date,
+        sources=sources or state.get("sync_data").get("sources", []),
+        db_sha256=_sha256(db_path),
+        report_sha256=_sha256(reports_dir / "data-quality.json"),
+        schema_version=SCHEMA_VERSION,
+        image_stage="unknown",
+        is_incremental_baseline=True,
+        state_committed=True,
+        notes="backfilled (database predates manifest system)",
+    )
+    try:
+        write_manifest(manifest, mpath)
+        logger.info("backfilled publish manifest at %s", mpath)
+    except OSError as exc:
+        logger.warning("could not backfill publish manifest: %s", exc)
+
+
+def _mark_state_committed(db_path: Path, state: SyncState) -> bool:
+    """Flip a prior publish manifest's state_committed to true after recovery.
+
+    When a run reconciles state from the database (healing a "database published
+    but state not committed" split), the split-recognition record in the
+    manifest must be updated so the next run no longer sees a false split. Only
+    touches the manifest when its run_id matches the run the state was
+    reconciled from (S0-1).
+    """
+    from pipeline.core.manifest import manifest_path_for, read_manifest, write_manifest
+
+    mpath = manifest_path_for(db_path)
+    manifest = read_manifest(mpath)
+    run_id = state.get("sync_data").get("run_id")
+    if not manifest or not run_id or manifest.get("run_id") != run_id:
+        return False
+    if manifest.get("state_committed"):
+        return True
+    manifest["state_committed"] = True
+    try:
+        write_manifest(manifest, mpath)
+    except OSError as exc:
+        logger.warning("could not mark manifest state_committed after recovery: %s", exc)
+        return False
+    return True
+
+
 def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
                 cache_dir: Path, state: SyncState, loader, reports_dir: Path,
-                run_id: str, persist_raw: bool) -> int:
+                run_id: str, persist_raw: bool, started_at: str) -> int:
     # --- guard: running a source subset that EXCLUDES a previously-ingested
     # source would wipe that source's derived rows from the published DB.
     existing = _count_existing(db_path)
+    # Recovery from "database published but state not committed" (S0-1): the
+    # live DB has a real snapshot but .sync_state.json knows no source set, so
+    # rebuild the incremental markers from the DB's latest successful run and
+    # persist them. This is what makes a publish whose state save failed (or a
+    # killed process between publish and state save) recoverable on the next run.
+    if existing > 0 and not state.get("sync_data").get("sources"):
+        if state.reconcile_from_db(db_path):
+            try:
+                state.save()
+            except OSError as exc:
+                logger.warning("reconciled sync state could not be persisted: %s", exc)
+            if _mark_state_committed(db_path, state):
+                logger.info("marked prior publish manifest as state_committed=true")
+            logger.info(
+                "reconciled sync state from database (previous publish may not "
+                "have committed .sync_state.json)"
+            )
     prev_sources = state.get("sync_data").get("sources", [])
     dropped = [s for s in prev_sources if s not in sources]
     added = [s for s in sources if s not in prev_sources]
@@ -627,7 +748,8 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
             if records_by_source:
                 try:
                     _build_db(conn, records_by_source, sources, partial=True,
-                              run_id=run_id, source_stats=source_stats, failures=failures)
+                              run_id=run_id, source_stats=source_stats,
+                              failures=failures, started_at=started_at)
                     _write_validation_report(candidate, reports_dir, args.skip_validation)
                 except Exception as exc:  # noqa: BLE001
                     logger.error("could not build inspection candidate: %r", exc)
@@ -650,10 +772,12 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
                     "all sources unchanged since the last successful sync; "
                     "incremental no-op (database already current)"
                 )
+                _backfill_manifest(db_path, state, reports_dir, sources)
                 return 0
 
-        _build_db(conn, records_by_source, sources, partial=partial,
-                  run_id=run_id, source_stats=source_stats, failures=failures)
+        snap_date = _build_db(conn, records_by_source, sources, partial=partial,
+                              run_id=run_id, source_stats=source_stats,
+                              failures=failures, started_at=started_at)
 
         # candidate validation is a publication gate (T1.4 / T2.10 / P0-2).
         # --skip-validation is a diagnosis/dev flag only: it must never let an
@@ -709,16 +833,80 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
             conn = None
             return 1
         conn = None
-        _publish(candidate, db_path)
 
-        _update_state(state, records_by_source, sources)
-        state.save()
+        # Candidate corruption guard: the candidate must be a self-consistent
+        # SQLite file before it replaces the live DB (S0-1).
+        if not verify_integrity(candidate):
+            logger.error(
+                "candidate integrity check failed; NOT published (live DB unchanged)"
+            )
+            cleanup_db_files(candidate)
+            return 1
+
+        _publish(candidate, db_path)
+        db_sha = _sha256(db_path)
+        report_path = reports_dir / "data-quality.json"
+        report_sha = _sha256(report_path) if report_path.exists() else None
+        manifest_path = manifest_path_for(db_path)
+
+        # Durable publish manifest (S0-1): written BEFORE the state file is
+        # updated with state_committed=false, then rewritten to true only after
+        # .sync_state.json is durably saved. If the process dies between publish
+        # and state save (or state.save() fails), the next run recognizes the
+        # split via state_committed=false and reconciles state from the DB.
+        manifest = build_manifest(
+            run_id=run_id,
+            snapshot_date=snap_date,
+            sources=sources,
+            db_sha256=db_sha,
+            report_sha256=report_sha,
+            schema_version=SCHEMA_VERSION,
+            image_stage="pending" if args.images else "skipped",
+            is_incremental_baseline=False,
+            state_committed=False,
+            notes="partial" if partial else None,
+        )
+        try:
+            write_manifest(manifest, manifest_path)
+        except OSError as exc:
+            logger.error(
+                "database published but publish manifest could not be written (%s); "
+                "next sync will reconcile state from the database", exc,
+            )
+            return 1
+
+        # state.save() failing after a successful publish is the "database
+        # published but state not committed" split — it must not be a silent
+        # success, and it must leave a recognizable recovery path (S0-1).
+        _update_state(state, records_by_source, sources,
+                      run_id=run_id, snapshot_date=snap_date)
+        try:
+            state.save()
+        except OSError as exc:
+            logger.error(
+                "DATABASE PUBLISHED but sync state could not be committed: %s", exc
+            )
+            logger.error(
+                "publish manifest at %s records state_committed=false; recovery: "
+                "re-run sync_data.py (it reconciles state from the database), or "
+                "confirm the DB is the one you want and delete %s",
+                manifest_path, state.path,
+            )
+            return 1
+        manifest["state_committed"] = True
+        manifest["is_incremental_baseline"] = not partial
+        try:
+            write_manifest(manifest, manifest_path)
+        except OSError as exc:
+            # DB + state are committed; only the manifest finalization failed.
+            logger.warning("could not finalize publish manifest: %s", exc)
         logger.info("snapshot published to %s", db_path)
 
         # optional images (only after a successful publish). The DB is already
         # published (valid canonical data); an image-stage failure is reported
         # and the run exits non-zero so the incomplete image cache is never
-        # mistaken for a fully-clean sync (P1-1).
+        # mistaken for a fully-clean sync (P1-1). The manifest's image_stage
+        # distinguishes canonical-DB success from image-cache failure (S0-1).
         if args.images:
             from scripts.download_images import backfill_metadata, download_all, ensure_thumbnails
 
@@ -731,7 +919,26 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
                 conn.close()
             logger.info("image stage: %d images, %d thumbnails derived, %d refused by policy",
                         done, derived, refused)
+            manifest["image_stage"] = "ok" if not (failed or thumb_failed) else "failed"
+            try:
+                write_manifest(manifest, manifest_path)
+            except OSError as exc:
+                logger.warning("could not record image stage in manifest: %s", exc)
             if failed or thumb_failed:
+                # audit trail distinguishes a published canonical DB from an
+                # incomplete image cache (S0-1).
+                try:
+                    run_conn = connect(db_path)
+                    try:
+                        run_conn.execute(
+                            "UPDATE sync_run SET note = COALESCE(note,'') || '; image stage failed' "
+                            "WHERE run_id = ?", [run_id],
+                        )
+                        run_conn.commit()
+                    finally:
+                        run_conn.close()
+                except sqlite3.Error:
+                    pass
                 logger.error(
                     "image stage had %d download / %d thumbnail failures; DB published "
                     "but image cache incomplete — re-run scripts/download_images.py",

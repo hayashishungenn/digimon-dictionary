@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
 
 import scripts.sync_data as sync_data
-from pipeline.core.schema import connect
+from pipeline.core.manifest import manifest_path_for, read_manifest
+from pipeline.core.schema import SCHEMA_VERSION, connect
 from pipeline.core.sync_state import SyncState
 from tests.conftest import _mk, build_fixture_db
 
@@ -306,3 +308,217 @@ def test_successful_run_writes_sync_run_row(env_db, tmp_path):
     assert run is not None
     assert run["status"] == "ok"
     assert run["sources"] == "dapi"
+
+
+# ---------------------------------------------------------------------------
+# S0-1: sync_run started_at + publish manifest
+# ---------------------------------------------------------------------------
+def test_sync_run_records_started_at_and_snapshot_date(env_db, tmp_path):
+    """sync_run.started_at must be the run's real start (never NULL), and the
+    snapshot_date must match the snapshot row for the same run (S0-1)."""
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    assert sync_data.run(["--sources", "dapi"], loader=loader,
+                         reports_dir=tmp_path / "reports") == 0
+    conn = connect(env_db)
+    run = conn.execute(
+        "SELECT started_at, finished_at, snapshot_date FROM sync_run ORDER BY rowid DESC LIMIT 1"
+    ).fetchone()
+    snap = conn.execute("SELECT snapshot_date FROM snapshot ORDER BY id DESC LIMIT 1").fetchone()
+    conn.close()
+    assert run["started_at"] is not None
+    assert run["finished_at"] is not None
+    assert run["snapshot_date"] == snap["snapshot_date"]
+
+
+def test_publish_manifest_written_on_success(env_db, tmp_path):
+    """A clean publish writes a manifest describing run_id, snapshot date, the
+    DB + report SHA-256, schema version, image stage, and baseline eligibility."""
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    assert sync_data.run(["--sources", "dapi"], loader=loader,
+                         reports_dir=tmp_path / "reports") == 0
+
+    manifest = read_manifest(manifest_path_for(env_db))
+    assert manifest is not None
+    assert manifest["state_committed"] is True
+    assert manifest["is_incremental_baseline"] is True
+    assert manifest["image_stage"] == "skipped"
+    assert manifest["schema_version"] == SCHEMA_VERSION
+    assert manifest["database_sha256"] == db_hash(env_db)
+    assert manifest["sources"] == ["dapi"]
+
+    conn = connect(env_db)
+    run = conn.execute("SELECT run_id, snapshot_date FROM sync_run ORDER BY rowid DESC LIMIT 1").fetchone()
+    conn.close()
+    assert manifest["run_id"] == run["run_id"]
+    assert manifest["snapshot_date"] == run["snapshot_date"]
+    # report SHA-256 points at the report written for this run
+    assert manifest["report_sha256"] == hashlib.sha256(
+        (tmp_path / "reports" / "data-quality.json").read_bytes()
+    ).hexdigest()
+
+
+def test_partial_publish_is_not_a_baseline(env_db, tmp_path):
+    """A partial (source-subset) publish must not claim to be an incremental
+    baseline, even though its state is committed."""
+    state_path = tmp_path / ".sync_state.json"
+    state_path.write_text(
+        json.dumps({"sync_data": {"sources": ["dapi", "official", "digimons_net"]}}), "utf-8"
+    )
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    assert sync_data.run(["--sources", "dapi", "--partial-ok", "--publish-partial"],
+                         loader=loader, reports_dir=tmp_path / "reports") == 0
+    manifest = read_manifest(manifest_path_for(env_db))
+    assert manifest is not None
+    assert manifest["state_committed"] is True
+    assert manifest["is_incremental_baseline"] is False
+    assert manifest["notes"] == "partial"
+
+
+# ---------------------------------------------------------------------------
+# S0-1: failure injection — state save / manifest write / checkpoint /
+#       candidate corruption / image stage / publish-window recovery
+# ---------------------------------------------------------------------------
+def test_state_save_failure_is_detected_and_recovers(env_db, tmp_path, monkeypatch):
+    """state.save() failing AFTER a successful publish is the "database
+    published but state not committed" split: non-zero exit, DB live, manifest
+    records the split — and the next clean run reconciles state from the DB and
+    safely no-ops instead of rebuilding."""
+    from pipeline.core.sync_state import SyncState
+
+    real_save = SyncState.save
+    failing = {"on": True}
+
+    def flaky_save(self):
+        if failing["on"]:
+            raise OSError("simulated state-save disk failure")
+        return real_save(self)
+
+    monkeypatch.setattr(SyncState, "save", flaky_save)
+
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    rc = sync_data.run(["--sources", "dapi"], loader=loader, reports_dir=tmp_path / "reports")
+    assert rc != 0
+    # canonical DB was published (valid data) but the run must not be silent
+    assert digimon_count(env_db) == len(SUCCESS_RECORDS)
+    manifest = read_manifest(manifest_path_for(env_db))
+    assert manifest is not None
+    assert manifest["state_committed"] is False
+
+    # recovery: a clean rerun reconciles state from the DB and detects the
+    # payload unchanged -> incremental no-op, DB byte-identical.
+    failing["on"] = False
+    after_fail = db_hash(env_db)
+    assert sync_data.run(["--sources", "dapi"], loader=loader,
+                         reports_dir=tmp_path / "reports") == 0
+    assert db_hash(env_db) == after_fail
+    state_data = json.loads((tmp_path / ".sync_state.json").read_text("utf-8"))
+    assert state_data["sync_data"]["sources"] == ["dapi"]
+    assert state_data["dapi"]["records"] == len(SUCCESS_RECORDS)
+
+
+def test_manifest_write_failure_is_detected(env_db, tmp_path, monkeypatch):
+    """A publish whose manifest cannot be written must not silently succeed."""
+    before = db_hash(env_db)
+
+    def boom_manifest(manifest, path):
+        raise OSError("simulated manifest disk failure")
+
+    monkeypatch.setattr(sync_data, "write_manifest", boom_manifest)
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    rc = sync_data.run(["--sources", "dapi"], loader=loader, reports_dir=tmp_path / "reports")
+    assert rc != 0
+    # the DB is live (canonical publish happened) but the run is non-zero and
+    # the split is recoverable (state file has no source set yet).
+    assert digimon_count(env_db) == len(SUCCESS_RECORDS)
+    assert before != db_hash(env_db)
+    state_path = tmp_path / ".sync_state.json"
+    data = json.loads(state_path.read_text("utf-8")) if state_path.exists() else {}
+    assert not data.get("sync_data", {}).get("sources")
+
+
+def test_checkpoint_failure_keeps_db(env_db, tmp_path, monkeypatch):
+    """A failed WAL checkpoint must never publish the candidate."""
+    before = db_hash(env_db)
+
+    def failing_checkpoint(conn):
+        # mimic the real contract: checkpoint_and_close closes the connection
+        # on failure so the candidate file is not locked on Windows
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
+        return False
+
+    monkeypatch.setattr(sync_data, "checkpoint_and_close", failing_checkpoint)
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    rc = sync_data.run(["--sources", "dapi"], loader=loader, reports_dir=tmp_path / "reports")
+    assert rc != 0
+    assert db_hash(env_db) == before
+    assert not (tmp_path / "digidex.candidate.sqlite").exists()
+
+
+def test_candidate_corruption_keeps_db(env_db, tmp_path, monkeypatch):
+    """A candidate that fails integrity_check must never replace the live DB."""
+    before = db_hash(env_db)
+    monkeypatch.setattr(sync_data, "verify_integrity", lambda candidate: False)
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    rc = sync_data.run(["--sources", "dapi"], loader=loader, reports_dir=tmp_path / "reports")
+    assert rc != 0
+    assert db_hash(env_db) == before
+    # corrupt candidate is discarded, nothing leaks
+    assert not (tmp_path / "digidex.candidate.sqlite").exists()
+    assert candidate_sidecars(tmp_path) == []
+
+
+def test_image_stage_failure_distinguished_in_manifest(env_db, tmp_path, monkeypatch):
+    """--images with a failing image stage publishes the canonical DB but the
+    manifest records image_stage=failed and the sync_run note is updated — the
+    two stages are never conflated (S0-1)."""
+    import scripts.download_images as dl
+
+    monkeypatch.setattr(dl, "download_all", lambda db_path: (0, 0, 3))  # 3 failures
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    rc = sync_data.run(["--sources", "dapi", "--images"], loader=loader,
+                       reports_dir=tmp_path / "reports")
+    assert rc != 0
+    # canonical DB published; image cache incomplete
+    assert digimon_count(env_db) == len(SUCCESS_RECORDS)
+    manifest = read_manifest(manifest_path_for(env_db))
+    assert manifest is not None
+    assert manifest["image_stage"] == "failed"
+    assert manifest["state_committed"] is True  # DB + state committed
+    conn = connect(env_db)
+    note = conn.execute("SELECT note FROM sync_run ORDER BY rowid DESC LIMIT 1").fetchone()["note"]
+    conn.close()
+    assert "image stage failed" in (note or "")
+
+
+def test_publish_before_state_interruption_is_recoverable(env_db, tmp_path, monkeypatch):
+    """Simulate the exact crash window (publish done, state not saved) and prove
+    the next run recognizes it via the manifest and reconciles from the DB."""
+    from pipeline.core.sync_state import SyncState
+
+    real_save = SyncState.save
+    first_run = {"done": False}
+
+    def kill_after_publish(self):
+        # crash after the DB replace but before state is durable
+        if not first_run["done"]:
+            first_run["done"] = True
+            raise OSError("process killed mid-publish")
+        return real_save(self)
+
+    monkeypatch.setattr(SyncState, "save", kill_after_publish)
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    rc = sync_data.run(["--sources", "dapi"], loader=loader, reports_dir=tmp_path / "reports")
+    assert rc != 0
+    # split is recognizable
+    manifest = read_manifest(manifest_path_for(env_db))
+    assert manifest["state_committed"] is False
+    assert manifest["run_id"]  # a run_id exists for this publish
+
+    # recovery run reconciles and reports the payload unchanged
+    assert sync_data.run(["--sources", "dapi"], loader=loader,
+                         reports_dir=tmp_path / "reports") == 0
+    assert digimon_count(env_db) == len(SUCCESS_RECORDS)
+    assert read_manifest(manifest_path_for(env_db))["state_committed"] is True

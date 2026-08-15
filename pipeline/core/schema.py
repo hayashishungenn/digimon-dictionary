@@ -669,3 +669,26 @@ def cleanup_sidecars(path: str | Path) -> None:
                 sidecar.unlink()
         except OSError:
             pass
+
+
+def verify_integrity(db_path: str | Path) -> bool:
+    """True when `db_path` is a self-consistent, readable SQLite database.
+
+    Runs ``PRAGMA integrity_check`` (guards a candidate before it replaces the
+    live DB — a corrupt candidate must never become the published database,
+    S0-1) and also serves the backup/restore flow's validation step.
+    """
+    try:
+        conn = connect_readonly(db_path)
+    except sqlite3.Error:
+        return False
+    try:
+        rows = conn.execute("PRAGMA integrity_check").fetchall()
+        return len(rows) == 1 and rows[0][0] == "ok"
+    except sqlite3.Error:
+        return False
+    finally:
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass

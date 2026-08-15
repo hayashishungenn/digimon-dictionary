@@ -293,3 +293,75 @@ def test_raw_records_written_atomically(tmp_path, monkeypatch):
     # meta written
     meta = _json.loads((raw_root / "dapi" / "records.meta.json").read_text("utf-8"))
     assert meta["count"] == len(RECORDS)
+
+
+# ---------------------------------------------------------------------------
+# S0-1: state reconciliation after "database published but state not committed"
+# ---------------------------------------------------------------------------
+def test_reconcile_state_from_db_after_state_loss(env_db, tmp_path):
+    """Losing .sync_state.json must not force a rebuild or hide the incremental
+    no-op: the next run reconciles state from the DB's latest run and detects
+    the payload unchanged."""
+    loader = make_loader({"dapi": (RECORDS, None)})
+    assert sync_data.run(["--sources", "dapi"], loader=loader,
+                         reports_dir=tmp_path / "reports") == 0
+    after_first = db_hash(env_db)
+
+    # the state file is lost (e.g. user cleanup / failed save)
+    state_path = tmp_path / ".sync_state.json"
+    assert state_path.exists()
+    state_path.unlink()
+
+    rc = sync_data.run(["--sources", "dapi"], loader=loader, reports_dir=tmp_path / "reports")
+    assert rc == 0
+    assert db_hash(env_db) == after_first  # reconciled + no-op, no rebuild
+    assert not (tmp_path / "digidex.candidate.sqlite").exists()
+
+    # the reconciled state is persisted and carries the source hashes
+    import json as _json
+
+    data = _json.loads(state_path.read_text("utf-8"))
+    assert data["sync_data"]["sources"] == ["dapi"]
+    assert data["dapi"]["records"] == len(RECORDS)
+    assert data["dapi"]["content_hash"]
+
+
+def test_reconcile_restores_source_change_detection(env_db, tmp_path):
+    """Reconciled state must still power the source-set drop guard: dropping a
+    source that the DB's last run used is refused even after state loss."""
+    loader1 = make_loader({"dapi": (RECORDS, None), "official": ([], None)})
+    assert sync_data.run(["--sources", "dapi,official"], loader=loader1,
+                         reports_dir=tmp_path / "reports") == 0
+    before = db_hash(env_db)
+
+    # lose the state file, then try to drop 'official'
+    state_path = tmp_path / ".sync_state.json"
+    state_path.unlink()
+    loader2 = make_loader({"dapi": (RECORDS, None)})
+    rc = sync_data.run(["--sources", "dapi"], loader=loader2,
+                       reports_dir=tmp_path / "reports")
+    assert rc != 0  # refused: reconciled state still knows 'official'
+    assert db_hash(env_db) == before
+
+
+def test_noop_backfills_manifest_for_pre_manifest_db(env_db, tmp_path):
+    """A DB current before the manifest system gets a publish manifest on the
+    next no-op run — backup/restore rely on the manifest existing (S0-1)."""
+    from pipeline.core.manifest import manifest_path_for, read_manifest
+
+    loader = make_loader({"dapi": (RECORDS, None)})
+    assert sync_data.run(["--sources", "dapi"], loader=loader,
+                         reports_dir=tmp_path / "reports") == 0
+    # simulate a DB published before manifests existed: drop the manifest
+    mpath = manifest_path_for(env_db)
+    assert mpath.exists()
+    mpath.unlink()
+
+    rc = sync_data.run(["--sources", "dapi"], loader=loader,
+                       reports_dir=tmp_path / "reports")
+    assert rc == 0
+    manifest = read_manifest(mpath)
+    assert manifest is not None
+    assert manifest["state_committed"] is True
+    assert manifest["is_incremental_baseline"] is True
+    assert manifest["database_sha256"] == db_hash(env_db)

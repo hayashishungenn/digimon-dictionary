@@ -44,6 +44,8 @@ apps/web/tests/fixtures/*.sqlite
 # Runtime sync state
 data/.sync_state.json
 data/.sync_state.json.tmp
+data/.publish_manifest.json
+data/.publish_manifest.json.tmp
 data/.sync.lock
 data/.http_cache/
 

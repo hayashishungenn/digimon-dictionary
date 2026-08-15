@@ -178,3 +178,22 @@ def test_migration_upgrades_old_db_without_data_loss(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_alias_unique'").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_conflict_entity_field'").fetchone()[0] == 1
     conn.close()
+
+
+def test_verify_integrity(tmp_path):
+    """verify_integrity accepts a valid DB, rejects missing/corrupt files (S0-1)."""
+    from pipeline.core.schema import create_schema
+
+    db = tmp_path / "digidex.sqlite"
+    conn = schema.connect(db)
+    create_schema(conn)
+    conn.close()
+    assert schema.verify_integrity(db) is True
+
+    # a non-database file is rejected
+    junk = tmp_path / "junk.sqlite"
+    junk.write_bytes(b"this is not a sqlite database" * 10)
+    assert schema.verify_integrity(junk) is False
+
+    # a missing file is rejected (not an exception)
+    assert schema.verify_integrity(tmp_path / "absent.sqlite") is False
