@@ -96,6 +96,11 @@ test('evolution graph expands to depth 2/3 with visible truncation on the real g
 	await page.getByText('全部可能前置').waitFor();
 	// switch to graph mode where the depth controls live
 	await page.getByRole('button', { name: '图谱模式' }).click();
+	// real data carries special evolution types -> the legend makes them readable
+	const legend = page.locator('.evo-legend');
+	if (await legend.isVisible()) {
+		await expect(legend.locator('.legend-chip').first()).toBeVisible();
+	}
 	// expand to depth 2 (Agumon is a hub -> budget truncation is visible)
 	const expand = page.getByRole('button', { name: '展开更深一层' });
 	await expand.click();

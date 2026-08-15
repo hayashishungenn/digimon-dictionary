@@ -311,7 +311,7 @@
 	{/if}
 	{#if data.evolution.truncated}
 		<div class="evo-status warn" role="status">
-			进化关系规模较大，仅展示部分关系：{data.evolution.node_count} 节点 / {data.evolution.edge_count} 边，另有 {data.evolution.dropped_edges} 条未展示。
+			进化关系达到预算上限（500 节点 / 2500 边），已截断：仅展示 {data.evolution.node_count} 节点 / {data.evolution.edge_count} 边，另有 {data.evolution.dropped_edges} 条边未展示。
 			建议使用较浅深度查看。
 		</div>
 	{/if}

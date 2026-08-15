@@ -158,6 +158,15 @@
 		</div>
 	{:else}
 		{#if graph.edges.length > 0}
+			{@const specialTypes = [...new Set(graph.edges.map((e) => e.evolution_type).filter((t) => t !== 'normal'))]}
+			{#if specialTypes.length > 0}
+				<div class="evo-legend" role="note">
+					<span class="mono faint">进化类型</span>
+					{#each specialTypes as t}
+						<span class="legend-chip">{typeLabel(t)}</span>
+					{/each}
+				</div>
+			{/if}
 			{#if (graph.node_count ?? 0) > 300}
 				<div class="evo-hint" role="status">图谱较大（{graph.node_count} 节点 / {graph.edge_count} 边），可滚动、缩放查看。</div>
 			{/if}
@@ -224,5 +233,20 @@
 		border-radius: var(--radius-sm);
 		padding: 8px 12px;
 		margin-bottom: 8px;
+	}
+	.evo-legend {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+		margin-bottom: 8px;
+		font-size: 11px;
+	}
+	.legend-chip {
+		font-size: 10.5px;
+		color: var(--accent);
+		border: 1px solid rgba(53, 208, 255, 0.3);
+		border-radius: 999px;
+		padding: 1px 8px;
 	}
 </style>

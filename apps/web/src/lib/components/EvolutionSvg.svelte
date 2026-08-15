@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { levelLabel } from './Badges.svelte';
 	import type { EvolutionGraph } from '$lib/api/types';
 
 	interface Props {
@@ -111,16 +112,18 @@
 			{@const node = graph.nodes[id]}
 			<g class="node" transform={`translate(${p.x}, ${p.y})`}>
 				<a href={`/digimon/${node.canonical_slug}`}>
+					<title>{node.name_zh_cn ?? ''}{node.name_en} · {levelLabel(node.level ?? 'unknown')} · {node.canonical_slug}</title>
 					<rect x="0" y="0" width={NODE_W} height={NODE_H} rx="8" class="node-bg"
 						class:center={Number(id) === centerId} />
-					<text x={NODE_W / 2} y={NODE_H - 10} text-anchor="middle" class="node-name">
-						{node.name_zh_cn ?? node.name_en ?? node.canonical_slug}
-					</text>
 					{#if node.main_image}
 						<image href={node.main_image} x={NODE_W / 2 - 26} y="4" width="52" height="52" preserveAspectRatio="xMidYMid meet" />
 					{:else}
 						<text x={NODE_W / 2} y="34" text-anchor="middle" class="node-fallback">?</text>
 					{/if}
+					<text x={NODE_W / 2} y={NODE_H - 8} text-anchor="middle" class="node-name">
+						{node.name_zh_cn ?? node.name_en ?? node.canonical_slug}
+					</text>
+					<text x="6" y="10" class="node-level">{levelLabel(node.level ?? 'unknown')}</text>
 				</a>
 			</g>
 		{/each}
@@ -189,6 +192,12 @@
 	:global(.node-fallback) {
 		fill: #66708c;
 		font-size: 20px;
+	}
+	:global(.node-level) {
+		fill: #66708c;
+		font-size: 8.5px;
+		font-family: var(--mono);
+		pointer-events: none;
 	}
 	:global(.edge) {
 		transition: stroke 0.15s;
