@@ -79,3 +79,55 @@ def test_profile_attack_extraction_pattern():
     text = "A Reptile Digimon... {{AT|Baby Flame}}."
     m = re.findall(r"\{\{\s*AT(?:K)?\s*\|([^|}]+)", text)
     assert m == ["Baby Flame"]
+
+
+# ---------------------------------------------------------------------------
+# P1-2: clean_wikitext — no raw templates reach the user; unknown ones are
+# flagged for review instead of silently deleted.
+# ---------------------------------------------------------------------------
+def test_clean_renders_known_templates():
+    text, unresolved = wikitext.clean_wikitext("{{JP}} {{ETY|Agu}} May come from {{ETY|aguma}}")
+    assert unresolved is False
+    assert "{{" not in text and "[[" not in text
+    assert "Agu" in text and "Japanese" in text
+
+
+def test_clean_resolves_links_and_refs():
+    text, unresolved = wikitext.clean_wikitext(
+        "Living in the deep [[Net Ocean|oceans of the Net]], a [[V-dramon]]<ref>n</ref>."
+    )
+    assert unresolved is False
+    assert "[[Net Ocean|oceans of the Net]]" not in text
+    assert "oceans of the Net" in text
+    assert "<ref" not in text
+
+
+def test_clean_keeps_attack_name_from_profile():
+    text, unresolved = wikitext.clean_wikitext("A Reptile Digimon... {{AT|Baby Flame}}.")
+    assert unresolved is False
+    assert "Baby Flame" in text
+    assert "{{" not in text
+
+
+def test_clean_drops_file_links():
+    text, _ = wikitext.clean_wikitext("[[File:Agumon.jpg|thumb]] [[Metal Greymon (Virus)|Metal Greymon]]")
+    assert "File:Agumon" not in text
+    assert "Metal Greymon" in text
+
+
+def test_clean_strips_ref_group_in_name():
+    text, _ = wikitext.clean_wikitext('列车兽<ref group="N">note</ref> is the official name')
+    assert "<ref" not in text
+    assert "列车兽 is the official name" == text
+
+
+def test_clean_unknown_template_kept_and_flagged():
+    text, unresolved = wikitext.clean_wikitext("some {{unknown_template|foo}} residue")
+    assert unresolved is True
+    assert "{{unknown_template|foo}}" in text  # not silently deleted
+
+
+def test_strip_markup_backward_compat():
+    assert wikitext.strip_markup("[[Koromon]]<ref>''X''</ref>") == "Koromon"
+    assert wikitext.strip_markup("'''[[Greymon]]'''") == "Greymon"
+    assert wikitext.strip_markup("{{JP}} {{ETY|Agu}}") == "Japanese Agu"

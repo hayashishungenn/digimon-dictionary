@@ -18,10 +18,10 @@ from typing import Any
 from pipeline.core.models import SourceDigimon, SourceName, SourceSkill
 from pipeline.sources.base import SourceAdapter, save_raw
 from pipeline.sources.wikitext import (
+    clean_wikitext,
     extract_template,
     extract_wiki_section,
     parse_ol_field,
-    strip_markup,
 )
 
 logger = logging.getLogger(__name__)
@@ -183,34 +183,42 @@ class WikimonAdapter(SourceAdapter):
         if g1:
             rec.groups.append(g1)
 
-        # name origin (ety) + design year (yd)
+        # name origin (ety) + design year (yd) — cleaned with template
+        # rendering; unresolved templates are kept + flagged for review (P1-2)
         ety = (pd.get("ety") or "").strip()
         if ety:
-            rec.name_origin = strip_markup(ety)
+            cleaned, unresolved = clean_wikitext(ety)
+            rec.name_origin = cleaned
+            if unresolved or "{{" in cleaned or "[[" in cleaned:
+                rec.extra["name_origin_unresolved"] = True
         yd = (pd.get("yd") or "").strip()
         if yd and yd.isdigit():
             rec.extra["design_year"] = yd
             if not rec.first_appearance_date:
                 rec.first_appearance_date = yd
 
-        # profiles: pn=N label, pe=N english, pj=N japanese (n can have sub-indexes)
-        for key, value in pd.items():
-            if re.fullmatch(r"pe\d*[a-z]*", key) and value.strip():
-                rec.profile.setdefault("en", value.strip())
-            if re.fullmatch(r"pj\d*[a-z]*", key) and value.strip():
-                rec.profile.setdefault("ja", value.strip())
-
-        # special moves referenced via {{AT|Name}} / {{ATK|Name}} inside profiles
+        # profiles: pn=N label, pe=N english, pj=N japanese (n can have sub-indexes).
+        # Special moves are extracted from the RAW text ({{AT|...}}), then the
+        # text is cleaned of wikitext before it is shown to users (P1-2).
         seen_sm: set[str] = set()
-        for lang in ("en", "ja"):
-            text = rec.profile.get(lang, "")
-            for m in re.finditer(r"\{\{\s*AT(?:K)?\s*\|([^|}]+)", text):
+        for key, value in pd.items():
+            if not re.fullmatch(r"p[ej]\d*[a-z]*", key):
+                continue
+            raw = value.strip()
+            if not raw:
+                continue
+            lang = "en" if key.startswith("pe") else "ja"
+            for m in re.finditer(r"\{\{\s*AT(?:K)?\s*\|([^|}]+)", raw):
                 name = m.group(1).strip()
                 if name and name not in seen_sm:
                     seen_sm.add(name)
                     rec.skills.append(
                         SourceSkill(names={lang: name}, skill_type="special_move", source="wikimon")
                     )
+            cleaned, unresolved = clean_wikitext(raw)
+            rec.profile.setdefault(lang, cleaned)
+            if unresolved or "{{" in cleaned or "[[" in cleaned:
+                rec.extra.setdefault("profile_unresolved", []).append(lang)
 
         # related forms from s1..sN
         for i in range(1, 16):

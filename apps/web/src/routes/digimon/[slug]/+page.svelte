@@ -105,6 +105,15 @@
 		if (main.download_status === 'pending') return { kind: 'pending', text: '图片待下载' };
 		return { kind: main.download_status, text: `图片状态：${main.download_status}` };
 	});
+
+	// Fields with a recorded cross-source conflict, for the source table (P1-2).
+	let conflictFields = $derived.by(() => new Set((data?.conflicts ?? []).map((c) => c.field)));
+	function fieldStatus(field: string): { kind: string; label: string } {
+		if (conflictFields.has(field)) return { kind: 'conflict', label: '冲突' };
+		const p = data?.source.find((s) => s.field === field);
+		if (!p?.source) return { kind: 'missing', label: '缺失' };
+		return { kind: 'sourced', label: '有来源' };
+	}
 </script>
 
 <svelte:head>
@@ -346,22 +355,42 @@
 		<div class="profile-block">{data.name_origin}</div>
 	{/if}
 
+	{#if data.conflicts.length > 0}
+		<div class="section-title">字段冲突 Conflicts</div>
+		<div class="conflict-list">
+			{#each data.conflicts as c}
+				<div class="conflict-item">
+					<div class="conflict-field mono">{c.field}</div>
+					<div class="conflict-vs">
+						<span class="faint">{c.source_a}：</span>{c.value_a ?? '—'}
+						<span class="faint"> vs </span>
+						<span class="faint">{c.source_b}：</span>{c.value_b ?? '—'}
+					</div>
+					{#if c.resolution}
+						<div class="faint" style="font-size:12px">选择：{c.chosen_source} = {c.chosen_value ?? '—'}（{c.resolution}）</div>
+					{/if}
+				</div>
+			{/each}
+		</div>
+	{/if}
+
 	{#if data.source.length > 0}
 		<div class="section-title">数据来源 Source</div>
 		<details>
 			<summary class="faint">展开查看字段级出处</summary>
 			<table class="source-table">
-				<thead><tr><th>字段</th><th>来源</th><th>URL</th><th>获取时间</th><th>置信度</th></tr></thead>
+				<thead><tr><th>字段</th><th>状态</th><th>来源</th><th>URL</th><th>获取时间</th></tr></thead>
 				<tbody>
 					{#each data.source as p}
+						{@const st = fieldStatus(p.field)}
 						<tr>
 							<td>{p.field}</td>
+							<td><span class="prov-status {st.kind}">{st.label}</span></td>
 							<td>{p.source ?? '—'}</td>
 							<td>
 							{#if p.source_url}<a href={p.source_url} target="_blank" rel="noopener">{p.source_url}</a>{:else}—{/if}
 						</td>
 							<td>{p.retrieved_at ?? '—'}</td>
-							<td>{p.confidence ?? '—'}</td>
 						</tr>
 					{/each}
 				</tbody>
@@ -574,5 +603,43 @@
 	.img-status.failed,
 	.img-status.missing {
 		color: var(--gold);
+	}
+	.conflict-list {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		margin-bottom: 12px;
+	}
+	.conflict-item {
+		background: rgba(255, 200, 87, 0.06);
+		border: 1px solid rgba(255, 200, 87, 0.3);
+		border-radius: var(--radius-sm);
+		padding: 8px 12px;
+		font-size: 13px;
+	}
+	.conflict-field {
+		font-size: 11px;
+		color: var(--gold);
+		margin-bottom: 2px;
+	}
+	.prov-status {
+		display: inline-block;
+		font-size: 11px;
+		padding: 0 7px;
+		border-radius: 999px;
+		border: 1px solid var(--border);
+		color: var(--text-dim);
+		white-space: nowrap;
+	}
+	.prov-status.sourced {
+		color: var(--green);
+		border-color: rgba(94, 242, 160, 0.35);
+	}
+	.prov-status.conflict {
+		color: var(--gold);
+		border-color: rgba(255, 200, 87, 0.4);
+	}
+	.prov-status.missing {
+		color: var(--text-faint);
 	}
 </style>

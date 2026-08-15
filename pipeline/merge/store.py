@@ -23,6 +23,7 @@ from pipeline.core.enums import (
     parse_level,
 )
 from pipeline.core.models import MatchedEntity, SourceDigimon, SourceName, SourceSkill
+from pipeline.sources.wikitext import strip_residual_markup
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +73,9 @@ def _skill_match_key(s: SourceSkill) -> str:
 
 
 class CanonicalStore:
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: sqlite3.Connection, *, run_id: str | None = None) -> None:
         self.conn = conn
+        self.run_id = run_id  # provenance rows record which sync run wrote them (P1-2)
 
     # ------------------------------------------------------------------ helpers
     def _lookup_type(self, name: str) -> int | None:
@@ -525,8 +527,18 @@ class CanonicalStore:
         return img
 
     def _content_hash(self, entity: MatchedEntity) -> str:
+        """Hash of the full normalized payload (P1-2).
+
+        Covers every normalized field that affects the final entity — names,
+        level/attribute, types/fields/groups, skills, profiles, evolutions,
+        first appearance, image URLs — not just ``extra``. A change in any of
+        them changes the per-entity content hash.
+        """
+        from pipeline.core.models import source_digimon_to_dict
+
         payload = json.dumps(
-            [r.extra for r in entity.records if r], sort_keys=True, default=str
+            [source_digimon_to_dict(r) for r in entity.records if r],
+            sort_keys=True, default=str,
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
@@ -638,12 +650,21 @@ class CanonicalStore:
             if best is None:
                 continue
             text, rec = best
-            self.conn.execute(
-                "UPDATE digimon SET "
-                f"{col} = ?, profile_source = ?, profile_source_url = ? "
-                "WHERE id = ?",
-                [text, rec.source, rec.extra.get("source_url"), digimon_id],
-            )
+            # P1-2: never show raw wikitext to users. If a profile still carries
+            # unresolved {{...}}/[[...]] after cleaning, strip it for the visible
+            # value and preserve the original in the review queue.
+            if "{{" in text or "[[" in text:
+                visible = strip_residual_markup(text)
+                self.conn.execute(
+                    f"UPDATE digimon SET {col}=?, profile_source=?, profile_source_url=? WHERE id=?",
+                    [visible or None, rec.source, rec.extra.get("source_url"), digimon_id],
+                )
+                self._queue_wikitext_review(digimon_id, f"profile_{lang}", text)
+            else:
+                self.conn.execute(
+                    f"UPDATE digimon SET {col}=?, profile_source=?, profile_source_url=? WHERE id=?",
+                    [text, rec.source, rec.extra.get("source_url"), digimon_id],
+                )
             self._prov("digimon", digimon_id, f"profile_{lang}", rec, value=text)
 
     def _merge_image(self, digimon_id: int, rec: SourceDigimon) -> None:
@@ -721,11 +742,34 @@ class CanonicalStore:
                 best = r
                 best_prio = prio
         if best and best.name_origin:
-            self.conn.execute(
-                "UPDATE digimon SET name_origin = COALESCE(?, name_origin) WHERE id = ?",
-                [best.name_origin, digimon_id],
-            )
-            self._prov("digimon", digimon_id, "name_origin", best, value=best.name_origin)
+            text = best.name_origin
+            # P1-2: strip residual wikitext for the visible value; keep the
+            # original in the review queue so nothing is silently deleted.
+            if "{{" in text or "[[" in text:
+                visible = strip_residual_markup(text)
+                self.conn.execute(
+                    "UPDATE digimon SET name_origin = COALESCE(?, name_origin) WHERE id = ?",
+                    [visible or None, digimon_id],
+                )
+                self._queue_wikitext_review(digimon_id, "name_origin", text)
+            else:
+                self.conn.execute(
+                    "UPDATE digimon SET name_origin = COALESCE(?, name_origin) WHERE id = ?",
+                    [text, digimon_id],
+                )
+            self._prov("digimon", digimon_id, "name_origin", best, value=text)
+
+    def _queue_wikitext_review(self, digimon_id: int, field: str, text: str) -> None:
+        """Flag a user-visible field that still carries unresolved wikitext."""
+        slug_row = self.conn.execute(
+            "SELECT canonical_slug FROM digimon WHERE id=?", [digimon_id]
+        ).fetchone()
+        self.queue_review(
+            "digimon", digimon_id,
+            f"{field} contains unresolved wikitext (P1-2)",
+            {"canonical_slug": slug_row["canonical_slug"] if slug_row else None,
+             "field": field, "value": text[:300]},
+        )
 
     # ---- evolution edges ---------------------------------------------------
     def add_edge(self, from_id: int, to_id: int, evolution_type: str = "normal",
@@ -767,9 +811,9 @@ class CanonicalStore:
         )
         self.conn.execute(
             """INSERT OR IGNORE INTO provenance
-               (entity_type, entity_id, field, source, source_url, retrieved_at, confidence, value_hash)
-               VALUES(?,?,?,?,?,?,?,?)""",
-            [entity_type, entity_id, field, source, url, _now(), "high", value_hash],
+               (entity_type, entity_id, field, source, source_url, retrieved_at, confidence, value_hash, run_id)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            [entity_type, entity_id, field, source, url, _now(), "high", value_hash, self.run_id],
         )
 
     def _record_value_conflicts(self, entity_type: str, entity_id: int, field: str,

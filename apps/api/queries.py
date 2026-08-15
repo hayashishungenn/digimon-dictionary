@@ -256,6 +256,16 @@ def get_digimon_full(conn: sqlite3.Connection, digimon_id: int) -> dict[str, Any
         "romanized": base.pop("name_romanized", None),
     }
     base["source"] = get_provenance(conn, "digimon", digimon_id)
+    base["conflicts"] = [
+        dict(r)
+        for r in conn.execute(
+            """SELECT field, source_a, value_a, source_b, value_b, chosen_value,
+                      chosen_source, review_status, resolution
+               FROM data_conflict WHERE entity_type = 'digimon' AND entity_id = ?
+               ORDER BY field""",
+            [digimon_id],
+        )
+    ]
     return base
 
 
@@ -446,7 +456,7 @@ def get_provenance(conn: sqlite3.Connection, entity_type: str, entity_id: int) -
     return [
         dict(r)
         for r in conn.execute(
-            """SELECT field, source, source_url, retrieved_at, confidence
+            """SELECT field, source, source_url, retrieved_at, confidence, run_id
                FROM provenance WHERE entity_type = ? AND entity_id = ?
                ORDER BY field""",
             [entity_type, entity_id],

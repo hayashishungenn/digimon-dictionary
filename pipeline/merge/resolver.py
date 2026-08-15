@@ -204,7 +204,7 @@ class EvolutionResolver:
                     """INSERT OR IGNORE INTO digimon_relation
                        (from_digimon_id, to_digimon_id, relation_type, source, note)
                        VALUES(?,?,?,?,?)""",
-                    [from_id, to_id, "related", "official", None],
+                    [from_id, to_id, "related", rec.source, None],
                 )
                 stats["relations"] += 1
         return stats

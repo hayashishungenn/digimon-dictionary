@@ -316,7 +316,7 @@ def _build_db(conn: sqlite3.Connection, records_by_source: dict[str, list],
 
     conn.execute("DELETE FROM digimon")
     conn.commit()
-    store = CanonicalStore(conn)
+    store = CanonicalStore(conn, run_id=run_id or "?")
     for _slug, entity in matcher.entities.items():
         store.upsert_entity(entity)
     store.commit()

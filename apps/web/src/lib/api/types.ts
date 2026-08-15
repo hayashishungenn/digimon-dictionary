@@ -167,6 +167,19 @@ export interface Provenance {
 	source_url: string | null;
 	retrieved_at: string | null;
 	confidence: string | null;
+	run_id: string | null;
+}
+
+export interface Conflict {
+	field: string;
+	source_a: string | null;
+	value_a: string | null;
+	source_b: string | null;
+	value_b: string | null;
+	chosen_value: string | null;
+	chosen_source: string | null;
+	review_status: string;
+	resolution: string | null;
 }
 
 export interface DigimonDetail extends DigimonListItem {
@@ -204,6 +217,7 @@ export interface DigimonDetail extends DigimonListItem {
 		romanized: string | null;
 	};
 	source: Provenance[];
+	conflicts: Conflict[];
 }
 
 export interface ListResponse {

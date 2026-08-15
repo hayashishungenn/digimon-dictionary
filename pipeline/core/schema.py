@@ -22,7 +22,7 @@ from pathlib import Path
 # the DB's `PRAGMA user_version`. Migrations are additive and never drop or
 # destroy data — an old DB is upgraded in place, so existing rows survive.
 # ---------------------------------------------------------------------------
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def _migrate_v1(conn: sqlite3.Connection) -> None:
@@ -198,6 +198,18 @@ def _migrate_v6(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v7(conn: sqlite3.Connection) -> None:
+    """v6 -> v7: provenance carries the sync run id (P1-2).
+
+    Every provenance row now records which sync run produced it, so a field's
+    origin is traceable to the specific fetch/build that wrote it, not just to
+    a source name + timestamp.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(provenance)")}
+    if "run_id" not in cols:
+        conn.execute("ALTER TABLE provenance ADD COLUMN run_id TEXT")
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_v1,
     2: _migrate_v2,
@@ -205,6 +217,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     4: _migrate_v4,
     5: _migrate_v5,
     6: _migrate_v6,
+    7: _migrate_v7,
 }
 
 
@@ -438,6 +451,7 @@ SCHEMA_DDL: list[str] = [
         retrieved_at TEXT,
         confidence  TEXT,
         value_hash  TEXT,
+        run_id      TEXT,                   -- sync run that produced this row (P1-2)
         UNIQUE (entity_type, entity_id, field, source)
     );
     CREATE INDEX IF NOT EXISTS idx_prov_entity ON provenance(entity_type, entity_id);
