@@ -54,6 +54,22 @@ def _group_rows(rows, key: str) -> dict[int, list[dict]]:
     return out
 
 
+def _dataset_summary(conn: sqlite3.Connection) -> dict:
+    """Concise dataset header so consumers know which snapshot they got (S1-3)."""
+    snap = conn.execute(
+        "SELECT snapshot_date, official_count, extended_count, total_count "
+        "FROM snapshot ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    schema_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    return {
+        "schema_version": schema_version,
+        "snapshot_date": snap[0] if snap else None,
+        "official_count": snap[1] if snap else None,
+        "extended_count": snap[2] if snap else None,
+        "total_count": snap[3] if snap else None,
+    }
+
+
 def _export_json(conn: sqlite3.Connection, out_dir: Path) -> None:
     """Nested digimon JSON with batched joins (no N+1) plus every data domain."""
     digimon_rows = conn.execute("SELECT * FROM digimon ORDER BY id").fetchall()
@@ -115,6 +131,7 @@ def _export_json(conn: sqlite3.Connection, out_dir: Path) -> None:
     payload = {
         "export_version": EXPORT_VERSION,
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "dataset": _dataset_summary(conn),
         "digimon": digimon,
         "types": _read_all(conn, "type"),
         "fields": _read_all(conn, "field"),
@@ -134,16 +151,22 @@ def _export_json(conn: sqlite3.Connection, out_dir: Path) -> None:
 
 
 def _export_csv(conn: sqlite3.Connection, out_dir: Path) -> None:
-    """Flat CSV digests. csv.writer handles quoting/Unicode; NULL -> empty cell."""
+    """Flat CSV digests. csv.writer handles quoting/Unicode; NULL -> empty cell.
+
+    Includes provenance-adjacent columns (name status / source / verified) so a
+    consumer can tell official from unverified without a second lookup (S1-3).
+    """
     flat = conn.execute(
         """SELECT id, canonical_slug, name_zh_cn, name_en, name_ja, name_romanized,
-                  level, attribute, x_antibody, is_official_reference, is_extended,
-                  first_appearance_title, main_image
+                  name_zh_cn_status, name_zh_cn_source, level, attribute,
+                  x_antibody, is_official_reference, is_extended,
+                  profile_verified, first_appearance_date, main_image
            FROM digimon ORDER BY id"""
     ).fetchall()
     cols = ["id", "canonical_slug", "name_zh_cn", "name_en", "name_ja", "name_romanized",
-            "level", "attribute", "x_antibody", "is_official_reference", "is_extended",
-            "first_appearance_title", "main_image"]
+            "name_zh_cn_status", "name_zh_cn_source", "level", "attribute",
+            "x_antibody", "is_official_reference", "is_extended",
+            "profile_verified", "first_appearance_date", "main_image"]
 
     tmp = out_dir / "digimon.csv.tmp"
     with open(tmp, "w", newline="", encoding="utf-8-sig") as fh:

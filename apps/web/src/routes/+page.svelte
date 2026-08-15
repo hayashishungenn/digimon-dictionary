@@ -85,7 +85,7 @@
 	function clearSearch() {
 		q = '';
 		searchMode = false;
-		load();
+		// the reload effect reloads the full list and clears the URL
 	}
 
 	async function load() {
@@ -122,8 +122,7 @@
 		const my = ++reqSeq;
 		if (!term.trim()) {
 			searchMode = false;
-			load();
-			return;
+			return; // the reload effect reloads + writes the URL
 		}
 		searchMode = true;
 		loading = true;
@@ -139,6 +138,7 @@
 		} finally {
 			if (my === reqSeq) loading = false;
 		}
+		writeUrl();
 	}, 250);
 
 	function onSearchInput(v: string) {
@@ -158,6 +158,47 @@
 		offset = 0;
 	}
 
+	// S1-3: filter state is persisted in the URL (?level=…&attribute=…&q=…) so a
+	// refresh or a shared link restores the exact list. One-way: read once on
+	// mount, write on change (replaceState — no history spam, no loop).
+	function filtersToParams(): URLSearchParams {
+		const sp = new URLSearchParams();
+		if (level) sp.set('level', level);
+		if (attribute) sp.set('attribute', attribute);
+		if (typeName) sp.set('type', typeName);
+		if (field) sp.set('field', field);
+		if (group) sp.set('group', group);
+		if (xAb !== null) sp.set('x_antibody', String(xAb));
+		if (official !== 'all') sp.set('official', official);
+		if (sort !== 'name') sp.set('sort', sort);
+		if (q) sp.set('q', q);
+		return sp;
+	}
+
+	function writeUrl() {
+		const qs = filtersToParams().toString();
+		const next = qs ? `?${qs}` : window.location.pathname;
+		if (window.location.search !== (qs ? `?${qs}` : '')) {
+			history.replaceState(null, '', next);
+		}
+	}
+
+	function applyParams(sp: URLSearchParams) {
+		level = sp.get('level');
+		attribute = sp.get('attribute');
+		typeName = sp.get('type');
+		field = sp.get('field');
+		group = sp.get('group');
+		const xa = sp.get('x_antibody');
+		xAb = xa === null ? null : xa === 'true';
+		const off = sp.get('official');
+		if (off === 'official' || off === 'extended') official = off;
+		const st = sp.get('sort');
+		if (st) sort = st;
+		const qq = sp.get('q');
+		q = qq ?? '';
+	}
+
 	// Filter signature — resets pagination when filters change (not on offset).
 	let filterKey = $derived.by(() =>
 		[level, attribute, typeName, field, group, xAb, official, sort, searchMode].join('~')
@@ -170,14 +211,24 @@
 		lastKey = filterKey;
 	});
 
-	// Reload on any reactive change (filters or pagination).
+	// Reload on any reactive change (filters or pagination), and keep the URL in
+	// sync (S1-3). `ready` defers the first load until onMount has applied any
+	// URL params, so a deep link never shows a flicker of the unfiltered list.
+	let ready = $state(false);
 	$effect(() => {
-		if (searchMode) return;
+		if (!ready || searchMode) return;
 		load();
+		writeUrl();
 	});
 
 	onMount(() => {
 		ensureMeta();
+		applyParams(new URLSearchParams(window.location.search));
+		if (q) {
+			searchMode = true;
+			doSearch(q);
+		}
+		ready = true;
 	});
 </script>
 

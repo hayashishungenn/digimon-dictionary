@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import sqlite3
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,6 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from pydantic import BaseModel, Field
 
 from pipeline.core.enums import Attribute, Level
-from pipeline.core.schema import connect_readonly
 
 from . import queries
 
@@ -76,11 +76,48 @@ app.add_middleware(
 )
 
 
+class _CountingConnection(sqlite3.Connection):
+    """sqlite3.Connection subclass that counts statements and logs elapsed time
+    when the request closes it — so every API request records how many SQL
+    queries it ran and how long the DB session took (S1-3)."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._digidex_queries = 0
+        self._digidex_start = time.perf_counter()
+
+    def execute(self, sql: str, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        self._digidex_queries += 1
+        return super().execute(sql, *args, **kwargs)
+
+    def close(self) -> None:
+        elapsed = (time.perf_counter() - self._digidex_start) * 1000
+        logger.info("api db session: %d SQL in %.1f ms", self._digidex_queries, elapsed)
+        super().close()
+
+
+def _open_readonly(db: Path) -> _CountingConnection:
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, factory=_CountingConnection)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only = ON")
+    return conn
+
+
+def _open_write(db: Path) -> _CountingConnection:
+    conn = sqlite3.connect(str(db), factory=_CountingConnection)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA busy_timeout = 5000")
+    return conn
+
+
 def _db() -> Any:
     db = _db_path()
     if not db.exists():
         raise HTTPException(503, "Dataset not synced yet. Run `uv run python scripts/sync_data.py`.")
-    return connect_readonly(db)
+    return _open_readonly(db)
 
 
 def _db_write() -> Any:
@@ -93,9 +130,7 @@ def _db_write() -> Any:
     db = _db_path()
     if not db.exists():
         raise HTTPException(503, "Dataset not synced yet. Run `uv run python scripts/sync_data.py`.")
-    from pipeline.core.schema import connect
-
-    return connect(db)
+    return _open_write(db)
 
 
 def _thumb_servable(item: dict[str, Any]) -> str | None:

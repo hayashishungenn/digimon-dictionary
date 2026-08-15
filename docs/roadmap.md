@@ -89,11 +89,16 @@
       `POST /api/review/{id}/resolve`（resolved/wontfix 必须带说明，wontfix ≠ 事实已验证）；
       `scripts/review_queue.py`（stats/list/show/resolve/export）；API/CLI/迁移测试 + 真实 DB 验证
       （775 开放项，wikitext 原文保留）。
+- [x] **S1-2 数据覆盖**：Wikimon 适配器提取 S2 infobox 主图 URL（Special:FilePath，本地缓存、
+      符合版权边界，下一次联网抓取补齐 248 图片缺口）；`docs/data-coverage-s1-2.md` 逐项核实各
+      缺口根因——82 日文 / 324 中文 / 等级 / 属性 / 首次登场标题均为真实无来源（0 例可补救），不编造。
+- [x] **S1-3 搜索/筛选/导出效率**：首页筛选状态写入 URL（`?level=…&attribute=…&q=…`，
+      replaceState 无历史噪音），刷新/深链恢复；导出 JSON 增加 `dataset` 摘要（schema/snapshot/
+      官方/扩展/总数），CSV 增加 `name_zh_cn_status/name_zh_cn_source/profile_verified`；
+      API 每次请求经 `sqlite3.Connection` 子类统计 SQL 数 + 耗时并记录日志（真实 DB 查询可观测）。
 
 ### 待完成
 
-- [ ] S1-2 数据覆盖（固定名单/官方集合日文缺口/扩展集合中译名等，按价值排序）
-- [ ] S1-3 搜索/筛选/导出效率（URL 保存筛选、导出含 snapshot/来源、SQL 与耗时记录）
 - [ ] S1-4 本地启动与维护体验（诊断脚本、PowerShell 启动脚本、README 核对）
 - [ ] UI-P1 / UI-P2（加载/空/错误状态系统、响应式与可访问性、图片性能、动效、个人收藏）
 - [ ] S2-1 个人注释标签收藏、S2-2 独立游戏技能接入

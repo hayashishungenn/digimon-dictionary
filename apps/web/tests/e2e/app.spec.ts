@@ -211,6 +211,26 @@ test('mobile filter drawer opens and applies filters', async ({ page }) => {
 	await expect(page.locator('[data-testid="digimon-card"]').first()).toBeVisible();
 });
 
+test('filters are saved in the URL and restored on reload', async ({ page }) => {
+	// deep link with filters applied
+	await page.goto('/?level=ultimate&attribute=vaccine');
+	await expect(page.getByRole('tab', { name: '究极体', exact: true })).toHaveClass(/active/);
+	const attrSelect = page.locator('.filters select').first();
+	await expect(attrSelect).toHaveValue('vaccine');
+	await expect(page.locator('[data-testid="digimon-card"]').first()).toBeVisible();
+
+	// applying a filter writes it to the URL (replaceState)
+	await page.getByRole('tab', { name: '成长期', exact: true }).click();
+	await expect(page).toHaveURL(/\?level=child&attribute=vaccine/);
+
+	// reload restores the exact list
+	await page.reload();
+	await expect(page.getByRole('tab', { name: '成长期', exact: true })).toHaveClass(/active/);
+	await expect(page.locator('[data-testid="digimon-card"]').first()).toBeVisible();
+	const badge = page.locator('.digimon-card .badge').first();
+	await expect(badge).toContainText('成长期');
+});
+
 test('detail page shows representative primary evolution line', async ({ page }) => {
 	// Agumon has Wikimon primary-line edges (Koromon → Agumon → Greymon ...)
 	await page.goto('/digimon/agumon');

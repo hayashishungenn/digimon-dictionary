@@ -123,6 +123,22 @@ def test_by_ids_returns_requested_order(client, fixture_db):
     assert client.get("/api/digimon/by-id", params={"ids": "abc"}).json()["items"] == []
 
 
+def test_queries_are_observable(client, caplog):
+    """Every API request records SQL count + elapsed for the DB session (S1-3)."""
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="apps.api.main"):
+        assert client.get("/api/search", params={"q": "亚古兽"}).status_code == 200
+        assert client.get("/api/digimon/agumon").status_code == 200
+    sessions = [
+        r.getMessage() for r in caplog.records
+        if r.name == "apps.api.main" and "api db session" in r.getMessage()
+    ]
+    assert len(sessions) == 2
+    for line in sessions:
+        assert "SQL in" in line  # e.g. "api db session: 3 SQL in 1.2 ms"
+
+
 def test_search_chinese(client):
     r = client.get("/api/search", params={"q": "亚古兽"})
     items = r.json()["items"]
