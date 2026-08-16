@@ -123,6 +123,18 @@ def test_by_ids_returns_requested_order(client, fixture_db):
     assert client.get("/api/digimon/by-id", params={"ids": "abc"}).json()["items"] == []
 
 
+def test_by_ids_unicode_digits_are_ignored_not_500(client):
+    """P2-04: tokens like '²' pass str.isdigit() but int() rejects them — the
+    endpoint must ignore non-ASCII digits instead of returning a 500."""
+    r = client.get("/api/digimon/by-id", params={"ids": "²"})
+    assert r.status_code == 200
+    assert r.json()["items"] == []
+    # mixed input: valid ids kept, unicode/empty/negative tokens ignored
+    r2 = client.get("/api/digimon/by-id", params={"ids": "1,²,2,,−3"})
+    assert r2.status_code == 200
+    assert [i["id"] for i in r2.json()["items"]] == [1, 2]
+
+
 def test_queries_are_observable(client, caplog):
     """Every API request records SQL count + elapsed for the DB session (S1-3)."""
     import logging

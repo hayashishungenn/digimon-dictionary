@@ -720,10 +720,23 @@ def checkpoint_and_close(conn: sqlite3.Connection) -> bool:
     when the main file is self-contained; False when the checkpoint failed
     (caller must NOT publish, or the replaced file could silently lack WAL
     content — P1-1).
+
+    The PRAGMA's return row is ``(busy, log_frames, checkpointed_frames)``:
+    ``busy != 0`` means another connection still held the WAL, so the checkpoint
+    returned with frames unflushed — treat that as failure, not success (P2-08).
     """
     try:
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
     except sqlite3.Error:
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
+        return False
+    busy = int(row[0]) if row else -1
+    if busy != 0:
+        # WAL was busy (another connection) — the main file may be missing
+        # unflushed frames. Close and report failure so we never publish it.
         try:
             conn.close()
         except sqlite3.Error:

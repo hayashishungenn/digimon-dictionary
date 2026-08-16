@@ -20,7 +20,13 @@ class SyncState:
     def _load(self) -> None:
         try:
             if self.path.exists():
-                self._data = json.loads(self.path.read_text("utf-8"))
+                data = json.loads(self.path.read_text("utf-8"))
+                # valid JSON but the wrong shape (e.g. `[]` / `null`) would
+                # crash setdefault() later — treat it as corrupt state (P2-02).
+                if isinstance(data, dict):
+                    self._data = data
+                else:
+                    self._data = {}
         except (OSError, ValueError):
             # A half-written state file (e.g. process killed mid-write) must not
             # crash the sync — fall back to empty state rather than raising.

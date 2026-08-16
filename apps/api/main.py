@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 import time
 from contextlib import asynccontextmanager
@@ -256,7 +257,11 @@ def digimon_by_ids(ids: str = Query(..., description="comma-separated digimon id
     page from fetching full details for a whole list (UI-P0-1). Registered
     before ``/api/digimon/{ident}`` so ``by-id`` is not captured as an ident.
     """
-    id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+    # ASCII-only digit tokens: str.isdigit() accepts ²/³ etc., which int() then
+    # rejects with a 500 — ignore any token that isn't a plain decimal id
+    # (P2-04). Real negative ids don't exist, so they are dropped too.
+    _ID_TOKEN = re.compile(r"[0-9]+")
+    id_list = [int(x) for x in ids.split(",") if _ID_TOKEN.fullmatch(x.strip())]
     conn = _db()
     try:
         items = queries.list_by_ids(conn, id_list[:500])

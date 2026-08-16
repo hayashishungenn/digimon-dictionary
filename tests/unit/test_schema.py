@@ -306,3 +306,28 @@ def test_verify_integrity(tmp_path):
 
     # a missing file is rejected (not an exception)
     assert schema.verify_integrity(tmp_path / "absent.sqlite") is False
+
+
+def test_checkpoint_detects_busy_wal(tmp_path):
+    """P2-08: a WAL checkpoint with a busy writer must return False, never a
+    silent success (a busy checkpoint can leave frames unflushed)."""
+    import sqlite3 as _sqlite3
+
+    db = tmp_path / "d.sqlite"
+    conn = schema.connect(db)
+    schema.create_schema(conn)
+    conn.commit()
+
+    # hold the WAL busy from a second connection with an open write transaction
+    other = _sqlite3.connect(db)
+    other.execute("PRAGMA journal_mode=WAL")
+    other.execute("BEGIN IMMEDIATE")
+    other.execute("INSERT INTO snapshot(snapshot_date) VALUES('x')")
+
+    assert schema.checkpoint_and_close(conn) is False  # busy=1 -> failure
+    other.rollback()
+    other.close()
+
+    # once the writer releases, a fresh checkpoint succeeds
+    conn2 = schema.connect(db)
+    assert schema.checkpoint_and_close(conn2) is True

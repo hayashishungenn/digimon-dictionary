@@ -259,6 +259,20 @@ def test_sync_state_recovers_from_partial_write(tmp_path):
     assert not (tmp_path / ".sync_state.json.tmp").exists()
 
 
+def test_sync_state_recovers_from_valid_but_wrong_type(tmp_path):
+    """P2-02: valid JSON that is the wrong shape (e.g. `[]` / `null`) must not
+    crash the sync — treat it as corrupt state and start empty."""
+    for payload in ("[]", "null", '"just a string"', "42"):
+        state_path = tmp_path / "state.json"
+        state_path.write_text(payload, "utf-8")
+        state = SyncState(state_path)
+        assert state.get("dapi").get("content_hash") is None
+        assert state.get("sync_data").get("sources") is None
+        state.set("dapi", content_hash="ok")
+        state.save()
+        assert json.loads(state_path.read_text("utf-8"))["dapi"]["content_hash"] == "ok"
+
+
 # ---------------------------------------------------------------------------
 # --skip-validation must not bypass the publish gate (P0-2)
 # ---------------------------------------------------------------------------
