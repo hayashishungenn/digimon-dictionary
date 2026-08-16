@@ -18,9 +18,10 @@ export const metaState = $state<{
 
 let started = false;
 
-/** Fetch /api/meta exactly once per session; subsequent callers reuse it. */
-export function ensureMeta(): void {
-	if (started) return;
+/** Fetch /api/meta exactly once per session; subsequent callers reuse it.
+ *  Pass `force=true` (e.g. a retry button) to re-fetch after a failure. */
+export function ensureMeta(force = false): void {
+	if (started && !force) return;
 	started = true;
 	metaState.loading = true;
 	api
@@ -28,6 +29,7 @@ export function ensureMeta(): void {
 		.then((m) => {
 			metaState.meta = m;
 			metaState.error = null;
+			metaState.dbUnavailable = false;
 		})
 		.catch((e) => {
 			// A 503 means the DB isn't synced yet; other failures are network/server.

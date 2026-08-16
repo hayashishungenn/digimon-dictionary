@@ -74,4 +74,18 @@ describe('meta store (shared dataset status)', () => {
 		await vi.waitFor(() => expect(store.metaState.loading).toBe(false));
 		expect(store.metaState.dbUnavailable).toBe(true);
 	});
+
+	it('ensureMeta(true) re-fetches after a failure (retry works)', async () => {
+		const client = await import('$lib/api/client');
+		const meta = client.api.meta as ReturnType<typeof vi.fn>;
+		meta.mockRejectedValueOnce(new Error('down')).mockResolvedValueOnce(META);
+
+		const store = await loadStore();
+		store.ensureMeta(); // first attempt fails
+		await vi.waitFor(() => expect(store.metaState.error).toBe('down'));
+		store.ensureMeta(true); // retry must actually re-fetch
+		await vi.waitFor(() => expect(store.metaState.meta?.counts.total).toBe(6));
+		expect(meta).toHaveBeenCalledTimes(2);
+		expect(store.metaState.error).toBeNull();
+	});
 });

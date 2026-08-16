@@ -26,7 +26,7 @@
 	<ErrorState
 		message={metaState.dbUnavailable ? '数据库尚未同步' : '无法读取数据集信息'}
 		detail={metaState.dbUnavailable ? '请先运行 uv run python scripts/sync_data.py 生成数据库。' : undefined}
-		retry={ensureMeta}
+		retry={() => ensureMeta(true)}
 	/>
 {:else if metaState.meta}
 	<div class="stat-grid">
