@@ -77,3 +77,13 @@ class SyncLock:
 def sync_lock(path: Path) -> SyncLock:
     """Context-manager factory: ``with sync_lock(path): ...``"""
     return SyncLock(path)
+
+
+def db_lock_path(db_path: str | Path) -> Path:
+    """The sync-lock path for a database file.
+
+    Every writer of a given database — the sync pipeline AND the review-write
+    entry points (API resolve, CLI resolve) — must take the SAME lock, otherwise
+    a sync rebuild can clobber a resolution made mid-publish (P1-01).
+    """
+    return Path(db_path).parent / ".sync.lock"

@@ -522,3 +522,39 @@ def test_publish_before_state_interruption_is_recoverable(env_db, tmp_path, monk
                          reports_dir=tmp_path / "reports") == 0
     assert digimon_count(env_db) == len(SUCCESS_RECORDS)
     assert read_manifest(manifest_path_for(env_db))["state_committed"] is True
+
+
+def test_reconcile_does_not_mark_committed_when_state_save_fails(env_db, tmp_path, monkeypatch):
+    """P1-04: during recovery, if state.save() fails the manifest must stay
+    state_committed=false — a later run must still see the split and retry."""
+    from pipeline.core.sync_state import SyncState
+
+    real_save = SyncState.save
+    failing = {"on": True}
+
+    def flaky_save(self):
+        if failing["on"]:
+            raise OSError("disk down")
+        return real_save(self)
+
+    monkeypatch.setattr(SyncState, "save", flaky_save)
+
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    # 1) publish succeeds but the state save fails -> split
+    assert sync_data.run(["--sources", "dapi"], loader=loader,
+                         reports_dir=tmp_path / "reports") != 0
+    assert read_manifest(manifest_path_for(env_db))["state_committed"] is False
+
+    # 2) next run reconciles state from the DB but ITS save also fails -> the
+    #    manifest must NOT be flipped to committed
+    assert sync_data.run(["--sources", "dapi"], loader=loader,
+                         reports_dir=tmp_path / "reports") == 0
+    assert read_manifest(manifest_path_for(env_db))["state_committed"] is False
+
+    # 3) once the save works, the reconcile persists state and heals the manifest
+    failing["on"] = False
+    assert sync_data.run(["--sources", "dapi"], loader=loader,
+                         reports_dir=tmp_path / "reports") == 0
+    assert read_manifest(manifest_path_for(env_db))["state_committed"] is True
+    state_data = json.loads((tmp_path / ".sync_state.json").read_text("utf-8"))
+    assert state_data["sync_data"]["sources"] == ["dapi"]

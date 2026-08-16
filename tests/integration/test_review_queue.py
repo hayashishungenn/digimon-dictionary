@@ -188,6 +188,35 @@ def test_api_review_export_json_and_csv(review_db, monkeypatch):
     assert len(rows) == 7  # header + 6 items
 
 
+def test_review_writes_serialized_with_sync_lock(review_db, monkeypatch):
+    """P1-01: API and CLI review writes must not proceed while a sync holds the
+    DB lock — they return 409 / non-zero instead of racing the publish."""
+    import scripts.review_queue as rq
+    from pipeline.core.lock import SyncLock, db_lock_path
+
+    monkeypatch.setenv("DIGIDEX_DB", str(review_db))
+    c = _api_client(review_db)
+    item = c.get("/api/review").json()["items"][0]
+
+    with SyncLock(db_lock_path(review_db)):
+        # API resolve refused (409), item unchanged
+        r = c.post(f"/api/review/{item['id']}/resolve",
+                   json={"status": "wontfix", "note": "racing"})
+        assert r.status_code == 409
+        # CLI resolve refused (non-zero)
+        assert rq.main(["resolve", str(item["id"]), "--status", "wontfix", "--note", "racing"]) == 1
+        conn = connect(review_db)
+        status = conn.execute(
+            "SELECT status FROM manual_review_queue WHERE id=?", [item["id"]]
+        ).fetchone()["status"]
+        conn.close()
+        assert status == "open"  # nothing changed while the lock was held
+
+    # once the lock is free the same write succeeds
+    assert c.post(f"/api/review/{item['id']}/resolve",
+                  json={"status": "wontfix", "note": "after sync"}).status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------

@@ -31,7 +31,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from pipeline.core.config import DB_PATH, REPORTS_DIR
-from pipeline.core.lock import SyncLockError, sync_lock
+from pipeline.core.lock import SyncLockError, db_lock_path, sync_lock
 from pipeline.core.manifest import build_manifest, manifest_path_for, write_manifest
 from pipeline.core.request import Fetcher
 from pipeline.core.schema import (
@@ -606,7 +606,7 @@ def run(argv: list[str] | None = None, *, loader=None, reports_dir: Path | None 
     # only persist raw snapshots for the real loader (tests inject fake adapters)
     persist_raw = loader is None
     try:
-        with sync_lock(db_path.parent / ".sync.lock"):
+        with sync_lock(db_lock_path(db_path)):
             return _run_locked(args, sources, db_path, candidate, cache_dir,
                                state, loader or load_source, reports_dir or REPORTS_DIR,
                                run_id, persist_raw, started_at)
@@ -704,12 +704,18 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
     # killed process between publish and state save) recoverable on the next run.
     if existing > 0 and not state.get("sync_data").get("sources"):
         if state.reconcile_from_db(db_path):
+            saved = False
             try:
                 state.save()
+                saved = True
             except OSError as exc:
                 logger.warning("reconciled sync state could not be persisted: %s", exc)
-            if _mark_state_committed(db_path, state):
-                logger.info("marked prior publish manifest as state_committed=true")
+            # only mark the manifest committed when the state file was ACTUALLY
+            # persisted — otherwise a later run must still see the split and
+            # re-attempt recovery (P1-04).
+            if saved:
+                if _mark_state_committed(db_path, state):
+                    logger.info("marked prior publish manifest as state_committed=true")
             logger.info(
                 "reconciled sync state from database (previous publish may not "
                 "have committed .sync_state.json)"

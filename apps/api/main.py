@@ -442,17 +442,26 @@ def review_export(
 
 @app.post("/api/review/{review_id}/resolve")
 def resolve_review(review_id: int, body: ResolveReviewRequest) -> dict[str, Any]:
-    conn = _db_write()
+    # Review writes must serialize with the sync pipeline: a rebuild preserves
+    # resolved/wontfix items from the live DB, so a resolution made mid-sync
+    # could otherwise be lost when the candidate replaces the DB (P1-01).
+    from pipeline.core.lock import SyncLockError, db_lock_path, sync_lock
+
     try:
-        try:
-            row = queries.resolve_review_item(conn, review_id, status=body.status, note=body.note)
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        if row is None:
-            raise HTTPException(404, f"no open review item #{review_id}")
-        return row
-    finally:
-        conn.close()
+        with sync_lock(db_lock_path(_db_path())):
+            conn = _db_write()
+            try:
+                try:
+                    row = queries.resolve_review_item(conn, review_id, status=body.status, note=body.note)
+                except ValueError as exc:
+                    raise HTTPException(422, str(exc)) from exc
+                if row is None:
+                    raise HTTPException(404, f"no open review item #{review_id}")
+                return row
+            finally:
+                conn.close()
+    except SyncLockError:
+        raise HTTPException(409, "a sync is in progress; retry after it finishes") from None
 
 
 # --------------------------------------------------------------------------

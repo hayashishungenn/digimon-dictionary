@@ -142,23 +142,32 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "resolve":
-        # resolution must go through a writable connection
+        # resolution must go through a writable connection, serialized with the
+        # sync pipeline (a rebuild preserves resolved items from the live DB, so
+        # a resolution made mid-sync could otherwise be lost — P1-01)
         conn.close()
+        from pipeline.core.lock import SyncLockError, db_lock_path, sync_lock
         from pipeline.core.schema import connect
 
-        conn = connect(Path(os.environ.get("DIGIDEX_DB", str(DB_PATH))))
+        db = Path(os.environ.get("DIGIDEX_DB", str(DB_PATH)))
         try:
-            row = queries.resolve_review_item(conn, args.id, status=args.status, note=args.note)
-        except ValueError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            conn.close()
+            with sync_lock(db_lock_path(db)):
+                conn = connect(db)
+                try:
+                    row = queries.resolve_review_item(conn, args.id, status=args.status, note=args.note)
+                except ValueError as exc:
+                    print(f"ERROR: {exc}", file=sys.stderr)
+                    conn.close()
+                    return 1
+                if row is None:
+                    print(f"ERROR: no open review item #{args.id}", file=sys.stderr)
+                    conn.close()
+                    return 1
+                print(f"#{row['id']} [{row['entity_type']}] -> {row['status']}  note={row['note']}")
+                conn.close()
+        except SyncLockError:
+            print("ERROR: a sync is in progress; retry after it finishes", file=sys.stderr)
             return 1
-        if row is None:
-            print(f"ERROR: no open review item #{args.id}", file=sys.stderr)
-            conn.close()
-            return 1
-        print(f"#{row['id']} [{row['entity_type']}] -> {row['status']}  note={row['note']}")
-        conn.close()
         return 0
 
     if args.cmd == "export":
