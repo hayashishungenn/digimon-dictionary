@@ -112,6 +112,22 @@
 
 > 每项均有回归测试。第一轮 7 处 + 第二轮 5 P1 + 8 P2 + 5 P3 全部修复并复验（`pytest 262 passed`、前端 `check/test/build/E2E(24)/realdb(20)` 全绿）。
 
+### 第三轮（发布期一致性审查，P1×2 + P2×3 + P3×1）
+
+**P1 高优先级**
+- **P1-1 `--images` 发布后改库使哈希失真**：图片阶段在 DB 发布后修改 `digimon_image`/`digimon.thumbnail`，但 manifest `database_sha256` 与报告 `db_sha256` 仍指向图片前文件。现在图片阶段先做审计 `sync_run` 更新、`wal_checkpoint(TRUNCATE)` 折回 WAL，再重算并原子回填 manifest + 报告两个哈希（顺带修复 `backup_local` 发布后立即备份静默丢图片行的问题）。
+- **P1-2 报告发布非原子 + 误导性报错**：JSON 成功/Markdown 失败时原本留下"DB 已更新、报告不完整、manifest/state 未写"的半提交且暂存被删。现在 JSON 提升失败致命中止（`ReportPublishError`，诚实报错 + 保留暂存）；Markdown 失败仅告警（JSON 为权威报告），同步照常完成并提交 manifest/state；`db_published` 跟踪原子替换，KeyboardInterrupt/意外异常不再误报"official database unchanged"。
+
+**P2 中优先级**
+- **P2-1 `/api/digimon/²` 500**：`get_digimon` 改用 `re.fullmatch(r"[0-9]+")`（与 by-id 一致），Unicode 数字按未知 slug 走 404；覆盖 detail/evolution/skills/aliases/relations/images 六条 `{ident}` 路由。
+- **P2-2 reconcile 把 partial 当作基线**：状态文件丢失后 partial 发布可被当成增量基线。SQL 只接受 `status='ok'` + manifest `is_incremental_baseline=false` 且 `state_committed=true` 的防御纵深（`state_committed` 守卫保留 S0-1"已发布但状态未提交"恢复路径）。
+- **P2-3 进化图节点预算边界（误报）**：逐条核验 + 对抗性图实测 `node_count` 永不超预算（frontier ⊆ visited → 每条边至多新增 1 节点），不加生产改动，仅加边界回归测试锁定不变量。
+
+**P3 Info**
+- **P3-01 修复** diagnose Windows npm 误报"未找到"（`shutil.which` 依 PATHEXT 返回 `npm.CMD` 但 CreateProcess 不解无扩展名）→ 始终传解析后的完整路径；本机实测 `npm 11.6.2`。
+
+> 每项均有回归测试（新增 7 个：图片哈希重算、MD 非致命、JSON 诚实中止、reconcile 拒绝 partial、Unicode 数字 404、进化图边界、diagnose npm），`pytest 269 passed`。
+
 
 ## 五、诚实声明 / 已知限制
 
@@ -121,7 +137,7 @@
 - **profile_zh_cn / 中文技能名为 0**：无可靠来源。
 - **`game_skill` 为空**：无许可明确的游戏技能来源（S2-2 已调研记录）。
 - **775 条人工复核**：全部可经 `/api/review` 或 `review_queue` 筛选/查看/处理/导出。
-- **提交**：两本任务书基线 44 个 commit 已按用户要求推送 GitHub；第二轮安全审查新增 8 个原子 commit（`origin/main` 之后，未 push）。
+- **提交**：两本任务书基线 44 个 commit 已按用户要求推送 GitHub；第二轮安全审查新增 8 个原子 commit、第三轮发布期一致性审查新增 3 个原子 commit（均 `origin/main` 之后，未 push）。
 - **公网部署未做**：本阶段明确不做；`dev.ps1` 与本机命令足以启动。
 
 ## 六、运行方式
