@@ -59,7 +59,7 @@ def _db_info(db: Path) -> dict:
         info["digimon_without_main_image"] = img_missing
         run = conn.execute(
             "SELECT run_id, status, sources, snapshot_date, started_at, finished_at "
-            "FROM sync_run ORDER BY rowid DESC LIMIT 1"
+            "FROM sync_run ORDER BY run_id DESC LIMIT 1"
         ).fetchone()
         if run:
             info["last_sync"] = dict(run)

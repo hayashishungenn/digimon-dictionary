@@ -75,7 +75,7 @@ class SyncState:
                 run = conn.execute(
                     """SELECT run_id, sources FROM sync_run
                        WHERE status IN ('ok','partial')
-                       ORDER BY rowid DESC LIMIT 1"""
+                       ORDER BY run_id DESC LIMIT 1"""
                 ).fetchone()
                 if run is None:
                     return False

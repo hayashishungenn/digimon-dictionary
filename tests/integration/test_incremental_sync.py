@@ -344,6 +344,35 @@ def test_reconcile_restores_source_change_detection(env_db, tmp_path):
     assert db_hash(env_db) == before
 
 
+def test_reconcile_picks_newest_run_after_multiple_runs(env_db, tmp_path):
+    """After several syncs, losing the state file must reconcile against the
+    NEWEST sync_run — not the highest rowid (which history preservation can
+    shuffle). Otherwise a stale-hash reconcile would re-publish every time."""
+    loader1 = make_loader({"dapi": (RECORDS, None)})
+    assert sync_data.run(["--sources", "dapi"], loader=loader1,
+                         reports_dir=tmp_path / "reports") == 0
+    changed = [
+        _mk("agumon", "Agumon", "アグモン", "亚古兽", dapi_id=1, skills=["New Skill"]),
+        _mk("greymon", "Greymon", "グレイモン", "暴龙兽", dapi_id=3),
+    ]
+    loader2 = make_loader({"dapi": (changed, None)})
+    assert sync_data.run(["--sources", "dapi"], loader=loader2,
+                         reports_dir=tmp_path / "reports") == 0
+
+    state_path = tmp_path / ".sync_state.json"
+    state_path.unlink()
+    rc = sync_data.run(["--sources", "dapi"], loader=loader2,
+                       reports_dir=tmp_path / "reports")
+    assert rc == 0
+    # reconcile read the NEWEST run's hash, which matches the current payload ->
+    # a clean no-op (no candidate left behind means no rebuild happened)
+    assert not (tmp_path / "digidex.candidate.sqlite").exists()
+    import json as _json
+
+    data = _json.loads(state_path.read_text("utf-8"))
+    assert data["sync_data"]["sources"] == ["dapi"]
+
+
 def test_noop_backfills_manifest_for_pre_manifest_db(env_db, tmp_path):
     """A DB current before the manifest system gets a publish manifest on the
     next no-op run — backup/restore rely on the manifest existing (S0-1)."""
