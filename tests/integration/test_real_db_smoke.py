@@ -31,9 +31,16 @@ pytestmark = pytest.mark.skipif(
 def client():
     from apps.api.main import app
 
+    prev = os.environ.get("DIGIDEX_DB")
     os.environ["DIGIDEX_DB"] = str(REAL_DB)
-    with TestClient(app) as c:
-        yield c
+    try:
+        with TestClient(app) as c:
+            yield c
+    finally:
+        if prev is None:
+            os.environ.pop("DIGIDEX_DB", None)
+        else:
+            os.environ["DIGIDEX_DB"] = prev
 
 
 def _expect(r, status=200):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,9 +13,16 @@ def client(fixture_db):
     from apps.api.main import app
 
     path, _conn = fixture_db
+    prev = os.environ.get("DIGIDEX_DB")
     os.environ["DIGIDEX_DB"] = str(path)
-    with TestClient(app) as c:
-        yield c
+    try:
+        with TestClient(app) as c:
+            yield c
+    finally:
+        if prev is None:
+            os.environ.pop("DIGIDEX_DB", None)
+        else:
+            os.environ["DIGIDEX_DB"] = prev
 
 
 def _ids(items):
@@ -543,24 +551,22 @@ def test_image_endpoint_unknown_slug_404(client):
     assert client.get("/api/images/not-a-digimon/main_image").status_code == 404
 
 
-def test_image_endpoint_serves_local_file(client, fixture_db, tmp_path, monkeypatch):
+def test_image_endpoint_serves_local_file(client, fixture_db, tmp_path):
     import struct
-
-    import pipeline.core.config as cfg
 
     _path, conn = fixture_db
     png = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + struct.pack(">II", 32, 32) + b"\x08\x06\x00\x00\x00"
-    img_dir = tmp_path / "images"
-    img_dir.mkdir()
-    local = img_dir / "agumon.png"
-    local.write_bytes(png)
-    monkeypatch.setattr(cfg, "IMAGES_DIR", img_dir)  # the API resolves cache root from config
+    # P0-1: the API derives the cache root from the DB path (DIGIDEX_DB), and
+    # local_path is a RELATIVE value resolved against that root.
+    cache_root = Path(_path).parent / "images"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    (cache_root / "agumon.png").write_bytes(png)
     did = conn.execute("SELECT id FROM digimon WHERE canonical_slug='agumon'").fetchone()["id"]
     conn.execute("DELETE FROM digimon_image WHERE digimon_id=?", [did])  # isolate from prior tests
     conn.execute(
         """INSERT INTO digimon_image(digimon_id, image_type, remote_url, local_path, download_status, content_type)
-           VALUES(?, 'main_image', 'https://digi-api.com/x.png', ?, 'downloaded', 'image/png')""",
-        [did, str(local)],
+           VALUES(?, 'main_image', 'https://digi-api.com/x.png', 'agumon.png', 'downloaded', 'image/png')""",
+        [did],
     )
     conn.commit()
     r = client.get("/api/images/agumon/main_image")

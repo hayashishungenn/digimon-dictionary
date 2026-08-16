@@ -102,6 +102,7 @@ def create_backup(
     reports_dir: Path | None = None,
     conflicts_path: Path = MANUAL_REVIEW_PATH,
     keep: int | None = None,
+    images_dir: Path | None = None,
 ) -> Path:
     """Create a timestamped backup directory and return its path.
 
@@ -142,11 +143,12 @@ def create_backup(
         else:
             missing.append(role)
 
-    if with_images and IMAGES_DIR.exists():
+    img_root = images_dir or IMAGES_DIR
+    if with_images and img_root.exists():
         img_target = out_dir / IMAGES_SUBDIR
         if img_target.exists():
             shutil.rmtree(img_target)
-        shutil.copytree(IMAGES_DIR, img_target)
+        shutil.copytree(img_root, img_target)
         includes_images = True
     else:
         includes_images = False

@@ -252,6 +252,13 @@ def get_digimon_full(conn: sqlite3.Connection, digimon_id: int) -> dict[str, Any
             [digimon_id],
         )
     ]
+    # P0-1: never leak a server filesystem path. Contract says local_path is
+    # cache-root-relative or NULL; anything else (absolute/UNC/..) is nulled.
+    from pipeline.core.images import is_bad_stored_path
+
+    for img in base["images"]:
+        if img.get("local_path") and is_bad_stored_path(img["local_path"]):
+            img["local_path"] = None
     base["evolution"] = get_evolution(conn, digimon_id, depth=1)
     base["relations"] = get_relations(conn, digimon_id)
     base["profile"] = {

@@ -493,9 +493,7 @@ def digimon_image(ident: str, kind: str):
     """
     if kind not in _IMAGE_KINDS:
         raise HTTPException(400, "kind must be main_image or thumbnail")
-    from pathlib import Path as _Path
-
-    from pipeline.core.config import IMAGES_DIR
+    from pipeline.core.images import image_cache_root, resolve_cached_path
 
     conn = _db()
     try:
@@ -521,10 +519,12 @@ def digimon_image(ident: str, kind: str):
                 raise HTTPException(404, "no image for this digimon")
         local = row["local_path"]
         if local:
-            path = _Path(local).resolve()
-            # only ever serve files inside the local image cache
-            cache_root = IMAGES_DIR.resolve()
-            if path.is_file() and cache_root in path.parents:
+            # P0-1: resolve against the cache root derived from THIS db (never
+            # CWD, never config.IMAGES_DIR) and enforce containment. A stale
+            # legacy absolute path is rebased when it maps under the root.
+            cache_root = image_cache_root(_db_path())
+            path = resolve_cached_path(cache_root, local)
+            if path is not None and path.is_file():
                 media = row["content_type"] or "image/png"
                 return FileResponse(path, media_type=media)
         if row["remote_url"]:

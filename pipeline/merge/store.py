@@ -455,7 +455,7 @@ class CanonicalStore:
                     zh_tw.value if zh_tw else None, en_dub.value if en_dub else None,
                     level_value, level_raw, level_2, attr_value, attr_raw,
                     1 if xab else 0, 1 if is_official else 0,
-                    image.main if image else None, image.thumb if image else None,
+                    image.main if image else None, None,  # P0-1: thumbnail must be relative/NULL, never a remote URL
                     dapi_id, wikimon_title, official_slug, digimons_net_slug,
                     content_hash, source_last_updated, now, 0 if is_official else 1,
                     digimon_id,
@@ -479,7 +479,7 @@ class CanonicalStore:
                     ja.value if ja else None, rom.value if rom else None,
                     level_value, level_raw, level_2, attr_value, attr_raw,
                     1 if xab else 0, 1 if is_official else 0, 0 if is_official else 1,
-                    image.main if image else None, image.thumb if image else None,
+                    image.main if image else None, None,  # P0-1: thumbnail must be relative/NULL, never a remote URL
                     dapi_id, wikimon_title, official_slug, digimons_net_slug,
                     content_hash, source_last_updated, now,
                 ],
@@ -670,15 +670,17 @@ class CanonicalStore:
     def _merge_image(self, digimon_id: int, rec: SourceDigimon) -> None:
         if not rec.image_url:
             return
-        # If a local cached file for this digimon already exists, preserve the
-        # 'downloaded' state across syncs (files are keyed digi_<id>_<name>).
+        # P0-1 contract: local_path is stored CACHE-ROOT-RELATIVE (or NULL). If a
+        # local cached file for this digimon already exists, preserve the
+        # 'downloaded' state across syncs (files are keyed digi_<id>_<...>).
         local = None
         status = "pending"
-        from pipeline.core.config import IMAGES_DIR
+        from pipeline.core.images import cache_root_for, to_cache_relative
 
+        cache_root = cache_root_for(None, conn=self.conn)
         try:
-            for f in IMAGES_DIR.glob(f"digi_{digimon_id:05d}_*"):
-                local = str(f)
+            for f in cache_root.glob(f"digi_{digimon_id:05d}_*"):
+                local = to_cache_relative(cache_root, f)
                 status = "downloaded"
                 break
         except OSError:

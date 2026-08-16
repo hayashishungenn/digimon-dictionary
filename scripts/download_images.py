@@ -26,7 +26,15 @@ import os
 import struct
 from pathlib import Path
 
-from pipeline.core.config import DB_PATH, IMAGES_DIR
+from pipeline.core.config import DB_PATH
+from pipeline.core.images import (
+    cache_root_for,
+    image_cache_root,
+    main_rel,
+    resolve_cached_path,
+    thumb_rel,
+    thumbs_dir,
+)
 from pipeline.core.request import Fetcher
 from pipeline.core.schema import connect
 
@@ -40,9 +48,6 @@ ALLOWED_IMAGE_HOSTS = ("digi-api.com", "wikimon.net")
 # image/* content types we will accept and write to disk.
 _ALLOWED_CONTENT_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp")
 
-# Local derived thumbnail cache (P0-3): smaller copies of the main art for list
-# views, stored under data/images/thumbs/ (still gitignored, never committed).
-THUMBS_DIR = IMAGES_DIR / "thumbs"
 THUMB_MAX_EDGE = 128  # px
 
 
@@ -69,8 +74,8 @@ def _write_thumbnail(src: Path, dst: Path) -> None:
         raise OSError(f"thumbnail failed for {src.name}: {exc}") from exc
 
 
-def _thumbnail_local(digimon_id: int) -> Path:
-    return THUMBS_DIR / f"digi_{digimon_id:05d}.png"
+def _thumbnail_local(digimon_id: int) -> str:
+    return thumb_rel(digimon_id)
 
 
 def sha256_of(data: bytes) -> str:
@@ -128,22 +133,18 @@ def _image_dimensions(data: bytes) -> tuple[int, int] | None:
     return None
 
 
-def _local_path(digimon_id: int, url: str) -> Path:
-    """Collision-proof local filename: digimon id + short URL hash + extension."""
-    from urllib.parse import urlparse
-
-    fname = Path(urlparse(url).path).name
-    suffix = Path(fname).suffix.lower() or ".img"
-    if len(suffix) > 6 or not suffix[1:].isalnum():
-        suffix = ".img"
-    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:8]
-    return IMAGES_DIR / f"digi_{digimon_id:05d}_{digest}{suffix}"
+def _local_path(digimon_id: int, url: str) -> str:
+    """Collision-proof, cache-root-RELATIVE filename (P0-1 contract):
+    ``digi_<id:05d>_<sha8(url)><suffix>``. The DB stores this relative value;
+    filesystem I/O prepends the resolved cache root."""
+    return main_rel(digimon_id, url)
 
 
-def backfill_metadata(conn) -> int:
+def backfill_metadata(conn, *, cache_root: Path | None = None) -> int:
     """Backfill width/height/sha256/content_type/fetched_at for every cached
     image from the file on disk (idempotent; used to enrich an already-downloaded
     cache). Returns the number of rows enriched."""
+    cache_root = cache_root or cache_root_for(None, conn=conn)
     done = 0
     rows = conn.execute(
         "SELECT id, local_path FROM digimon_image WHERE download_status = 'downloaded'"
@@ -151,8 +152,8 @@ def backfill_metadata(conn) -> int:
     for row in rows:
         if not row["local_path"]:
             continue
-        p = Path(row["local_path"])
-        if not p.exists():
+        p = resolve_cached_path(cache_root, row["local_path"])
+        if p is None or not p.is_file():
             continue
         try:
             data = p.read_bytes()
@@ -173,16 +174,18 @@ def backfill_metadata(conn) -> int:
     return done
 
 
-def ensure_thumbnails(conn, *, force: bool = False) -> tuple[int, int]:
+def ensure_thumbnails(conn, *, force: bool = False, cache_root: Path | None = None) -> tuple[int, int]:
     """Derive a local thumbnail for every downloaded main image (P0-3).
 
-    Writes ``data/images/thumbs/digi_<id>.png`` (a new derived cache file) and
+    Writes ``<cache_root>/thumbs/digi_<id>.png`` (a new derived cache file) and
     records an ``image_type='thumbnail'`` digimon_image row with dimensions,
     sha256, content type and fetch time. Also populates ``digimon.thumbnail``
-    with the local cache path. Returns ``(derived, failed)`` — a failure is
-    recorded with ``failure_reason`` so the quality report can surface it.
+    with the cache-root-RELATIVE path. Returns ``(derived, failed)`` — a failure
+    is recorded with ``failure_reason`` so the quality report can surface it.
     """
-    THUMBS_DIR.mkdir(parents=True, exist_ok=True)
+    cache_root = cache_root or cache_root_for(None, conn=conn)
+    thumbs_root = thumbs_dir(cache_root)
+    thumbs_root.mkdir(parents=True, exist_ok=True)
     rows = conn.execute(
         """SELECT id, digimon_id, remote_url, local_path FROM digimon_image
            WHERE image_type = 'main_image' AND download_status = 'downloaded'"""
@@ -191,10 +194,11 @@ def ensure_thumbnails(conn, *, force: bool = False) -> tuple[int, int]:
     failed = 0
     for row in rows:
         digimon_id = row["digimon_id"]
-        src = Path(row["local_path"]) if row["local_path"] else None
-        if not src or not src.exists():
+        src = resolve_cached_path(cache_root, row["local_path"])
+        if src is None or not src.is_file():
             continue  # nothing to derive from; the main file is missing
-        dst = _thumbnail_local(digimon_id)
+        thumb_rel_path = _thumbnail_local(digimon_id)
+        dst = cache_root / thumb_rel_path
         try:
             if not dst.exists() or force:
                 _write_thumbnail(src, dst)
@@ -205,7 +209,7 @@ def ensure_thumbnails(conn, *, force: bool = False) -> tuple[int, int]:
                 [digimon_id],
             ).fetchone()
             thumb_meta = [
-                digimon_id, str(dst), dims[0] if dims else None, dims[1] if dims else None,
+                digimon_id, thumb_rel_path, dims[0] if dims else None, dims[1] if dims else None,
                 sha256_of(data), "image/png",
             ]
             if existing:
@@ -214,7 +218,7 @@ def ensure_thumbnails(conn, *, force: bool = False) -> tuple[int, int]:
                        content_type=?, download_status='downloaded', failure_reason=NULL,
                        fetched_at=datetime('now')
                        WHERE id=?""",
-                    [*thumb_meta, existing["id"]],
+                    [*thumb_meta[1:], existing["id"]],  # digimon_id not a column here
                 )
             else:
                 conn.execute(
@@ -224,7 +228,7 @@ def ensure_thumbnails(conn, *, force: bool = False) -> tuple[int, int]:
                        VALUES(?, 'thumbnail', ?, ?, ?, ?, ?, 'downloaded', datetime('now'))""",
                     thumb_meta,
                 )
-            conn.execute("UPDATE digimon SET thumbnail=? WHERE id=?", [str(dst), digimon_id])
+            conn.execute("UPDATE digimon SET thumbnail=? WHERE id=?", [thumb_rel_path, digimon_id])
             derived += 1
         except OSError as exc:
             failed += 1
@@ -243,7 +247,7 @@ def ensure_thumbnails(conn, *, force: bool = False) -> tuple[int, int]:
                     """INSERT INTO digimon_image
                        (digimon_id, image_type, local_path, download_status, failure_reason, fetched_at)
                        VALUES(?, 'thumbnail', ?, 'failed', ?, datetime('now'))""",
-                    [digimon_id, str(dst), str(exc)],
+                    [digimon_id, thumb_rel_path, str(exc)],
                 )
             logger.warning("thumbnail failed for digimon %d: %s", digimon_id, exc)
     conn.commit()
@@ -251,10 +255,11 @@ def ensure_thumbnails(conn, *, force: bool = False) -> tuple[int, int]:
 
 
 def download_all(db_path: Path, *, limit: int | None = None, force: bool = False,
-                 fetcher: Fetcher | None = None) -> tuple[int, int, int]:
+                 fetcher: Fetcher | None = None, cache_root: Path | None = None) -> tuple[int, int, int]:
     """Download pending images. Returns (done, refused_by_policy, failed)."""
+    cache_root = cache_root or image_cache_root(db_path)
     conn = connect(db_path)
-    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    cache_root.mkdir(parents=True, exist_ok=True)
     rows = conn.execute(
         "SELECT id, digimon_id, remote_url, local_path FROM digimon_image "
         "WHERE download_status != 'downloaded'"
@@ -267,7 +272,8 @@ def download_all(db_path: Path, *, limit: int | None = None, force: bool = False
         fetcher = Fetcher(
             rate_per_second=1.0,
             max_concurrency=2,
-            cache_dir=DB_PATH.parent / ".http_cache",
+            # P0-1: the fetch cache belongs with THIS db, not the module default
+            cache_dir=db_path.parent / ".http_cache",
             headers={"User-Agent": "DigiDex/0.1 (personal offline cache)"},
         )
     done = 0
@@ -286,13 +292,14 @@ def download_all(db_path: Path, *, limit: int | None = None, force: bool = False
             logger.warning("image host not allowed (skipped): %s", url)
             continue
 
-        local = _local_path(row["digimon_id"], url)
+        local_rel = _local_path(row["digimon_id"], url)
+        local = cache_root / local_rel
         if local.exists() and not force:
             # existing file — only trust it if it is a valid, non-empty image
             if local.stat().st_size > 0 and _image_dimensions(local.read_bytes()) is not None:
                 conn.execute(
                     "UPDATE digimon_image SET local_path=?, download_status='downloaded' WHERE id=?",
-                    [str(local), row["id"]],
+                    [local_rel, row["id"]],
                 )
                 done += 1
                 continue
@@ -313,7 +320,7 @@ def download_all(db_path: Path, *, limit: int | None = None, force: bool = False
             os.replace(tmp, local)
             conn.execute(
                 "UPDATE digimon_image SET local_path=?, sha256=?, download_status='downloaded' WHERE id=?",
-                [str(local), sha256_of(result.content), row["id"]],
+                [local_rel, sha256_of(result.content), row["id"]],
             )
             done += 1
             if done % 50 == 0:
@@ -343,18 +350,23 @@ def main(argv: list[str] | None = None) -> int:
                     help="skip local thumbnail derivation (P0-3)")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    done, refused, failed = download_all(DB_PATH, limit=args.limit, force=args.force)
-    logger.info("done: %d images cached under data/images/", done)
+    # mirror sync_data._resolve_db_path: DIGIDEX_DB wins over the module default
+    db_path = Path(os.environ.get("DIGIDEX_DB", str(DB_PATH)))
+    cache_root = image_cache_root(db_path)
+    done, refused, failed = download_all(db_path, limit=args.limit, force=args.force,
+                                         cache_root=cache_root)
+    logger.info("done: %d images cached under %s", done, cache_root)
 
-    conn = connect(DB_PATH)
+    conn = connect(db_path)
     try:
-        enriched = backfill_metadata(conn)
+        enriched = backfill_metadata(conn, cache_root=cache_root)
         logger.info("metadata backfilled for %d cached images", enriched)
         derived = 0
         thumb_failed = 0
         if not args.no_thumbnails:
-            derived, thumb_failed = ensure_thumbnails(conn, force=args.force)
-            logger.info("thumbnails: %d derived, %d failed (data/images/thumbs/)", derived, thumb_failed)
+            derived, thumb_failed = ensure_thumbnails(conn, force=args.force, cache_root=cache_root)
+            logger.info("thumbnails: %d derived, %d failed (%s)",
+                        derived, thumb_failed, thumbs_dir(cache_root))
     finally:
         conn.close()
 
@@ -364,7 +376,7 @@ def main(argv: list[str] | None = None) -> int:
             failed, refused, thumb_failed,
         )
         return 1
-    logger.info("image pipeline ok: %d main + %d thumbnails under data/images/", done, derived)
+    logger.info("image pipeline ok: %d main + %d thumbnails under %s", done, derived, cache_root)
     return 0
 
 

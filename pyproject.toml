@@ -36,6 +36,7 @@ restore-local = "scripts.restore_local:main"
 inspect-snapshot = "scripts.inspect_snapshot:main"
 review-queue = "scripts.review_queue:main"
 diagnose = "scripts.diagnose:main"
+migrate-image-paths = "scripts.migrate_image_paths:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
