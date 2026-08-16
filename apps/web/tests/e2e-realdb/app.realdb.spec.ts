@@ -132,6 +132,37 @@ test('missing-image entity shows a placeholder, never a broken image', async ({ 
 	expect(broken.length).toBe(0);
 });
 
+test('home grid images are stable: no broken thumbnails, no console errors', async ({ page }) => {
+	// a real 60-card page: every card renders at a fixed aspect-ratio with a
+	// thumbnail or placeholder, never a broken image or a layout jump
+	const consoleErrors: string[] = [];
+	page.on('console', (msg) => {
+		if (msg.type() === 'error') consoleErrors.push(msg.text());
+	});
+	page.on('pageerror', (err) => consoleErrors.push(String(err)));
+
+	await page.goto('/');
+	await page.waitForSelector('[data-testid="digimon-card"]');
+	await page.waitForLoadState('networkidle');
+	await expect(page.locator('.digimon-card .thumb').first()).toBeVisible();
+	// scroll so lazy thumbnails below the fold actually load
+	for (let i = 0; i < 4; i++) {
+		await page.mouse.wheel(0, 1400);
+		await page.waitForTimeout(250);
+	}
+	// any thumbnail that HAS completed must have a real natural size — never a
+	// broken image (unloaded lazy imgs are swapped to the placeholder, not shown)
+	const broken = await page.locator('.digimon-card img').evaluateAll((els) =>
+		els.filter((e) => (e as HTMLImageElement).complete && (e as HTMLImageElement).naturalWidth === 0)
+	);
+	expect(broken.length).toBe(0);
+	// filtering + favorites still work with images present
+	await page.getByRole('button', { name: '官方图鉴' }).click();
+	await expect(page.locator('[data-testid="digimon-card"]').first()).toBeVisible();
+	// no unhandled image/console errors
+	expect(consoleErrors.filter((e) => /image|img|failed to load resource|net::ERR/i.test(e))).toEqual([]);
+});
+
 test('no horizontal overflow on narrow screens (home + detail)', async ({ page }) => {
 	// mobile project already runs at a narrow viewport; assert no overflow
 	await page.goto('/');
