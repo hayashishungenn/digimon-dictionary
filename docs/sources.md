@@ -10,7 +10,7 @@
 | wikimon.net | MediaWiki API | 日文名、中文名(CHI/ZHO)、英文配音名、类型/领域/组织、相关形态、进化、简介、词源、设计年份 | 内容 CC-BY-SA 3.0；图片未单独授权（Bandai/Toei 版权） | ✅ 已实现 |
 | digimon.net/reference | HTML/PHP | **官方状态验证**、官方三语名称、官方等级、必杀技、简介 | **明确禁止无断转用/转载** → 仅个人研究读取元数据，不下载官方图片 | ✅ 已实现 |
 | digimons.net | HTML | 简体中文社区通用译名 | 中文社区站 | ⏳ 调研中 |
-| digidb.io | HTML | 游戏数值（Cyber Sleuth 等，独立于世界观） | — | ⏳ 调研中 |
+| digidb.io | HTML | 游戏数值（Cyber Sleuth 等，独立于世界观） | 站点对机器人返回 403；社区镜像仅含数值列，无招式 | ✅ 数值已实现；`game_skill` 无来源保持为空（见 `docs/game-skills-s2-2.md`） |
 
 ## digi-api.com（已核实）
 

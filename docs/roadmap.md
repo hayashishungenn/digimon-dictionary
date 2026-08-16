@@ -100,9 +100,18 @@
       发布 manifest，`--json`，绝不输出 Token/环境变量，测试覆盖）；`scripts/dev.ps1` 启动后端+前端并
       打印 PID 与停止方式；pyproject 增加 backup/restore/inspect/review/diagnose 控制台别名；
       README 新增本地维护章节。
+- [x] **UI-P1 / UI-P2**：UI-P1-1 状态系统（skeleton/空/错误/缺失，错误信息安全化、重试、DB 未同步可区分）、
+      UI-P1-2 响应式与可访问性（筛选抽屉焦点圈定 + Escape、进化图方向键平移、reduced-motion E2E）、
+      UI-P1-3 图片性能（真实首页网格无坏图/无图片错误 E2E）、UI-P1-4 动效收口（首屏淡入、收藏星闪、
+      图谱深度切换过渡，全部受 reduced-motion 控制）、UI-P2-1 个人收藏（备注/标签/查询历史，localStorage，
+      导出与清空需确认，绝不污染 canonical）。
+- [x] **S2-1 个人注释标签收藏**：`personal.svelte.ts` 本地 store（备注/标签/历史，损坏安全，上限 20）；
+      详情页"个人研究备注"区（blur 自动保存、回车加标签）、收藏页个人数据面板（历史/导出/清空确认）；
+      查询历史记录；单元 + E2E 覆盖。
+- [x] **S2-2 游戏技能接入**：调研确认 digidb.io 对机器人 403、社区镜像无招式列、无许可明确的游戏技能
+      来源 → `game_skill` 保持为空（合法状态，schema v8 已就绪）；`game_digimon_stats` 341 行真实样本
+      可追溯；`docs/game-skills-s2-2.md` 记录调研与未来接入路径；详情页无假技能。
 
 ### 待完成
 
-- [ ] UI-P1-2 响应式与可访问性完善（移动抽屉键盘/焦点、reduced-motion 全量）
-- [ ] UI-P1-3 图片性能、UI-P1-4 动效收口、UI-P2-1 个人收藏
-- [ ] S2-1 个人注释标签收藏、S2-2 独立游戏技能接入
+- 无（两个任务书的全部任务已完成；进入代码审查 → 修复 → 全流程验证，见最终交付报告）
