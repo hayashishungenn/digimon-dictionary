@@ -301,6 +301,19 @@ def restore_backup(
             tmp = target.with_name(target.name + ".restore.tmp")
             shutil.copy2(src, tmp)
             staged.append((tmp, target))
+        # P2-06: a backup made with --with-images carries an images/ dir — restore
+        # it beside the target DB so the image cache comes back with the data.
+        images_src = backup_dir / IMAGES_SUBDIR
+        images_target = db_path.parent / IMAGES_SUBDIR
+        if images_src.is_dir():
+            if dry_run:
+                staged.append((images_src, images_target))
+            else:
+                tmp = images_target.with_name(images_target.name + ".restore.tmp")
+                if tmp.exists():
+                    shutil.rmtree(tmp)
+                shutil.copytree(images_src, tmp)
+                staged.append((tmp, images_target))
         # the staged DB temp must be a valid, matching database
         db_tmp = db_path.with_name(db_path.name + ".restore.tmp")
         if not dry_run and db_tmp.exists() and not _temp_db_matches(db_tmp, info):
@@ -352,8 +365,10 @@ def _commit_with_rollback(staged: list[tuple[Path, Path]]) -> list[Path]:
             try:
                 if backup_orig is not None and backup_orig.exists():
                     os.replace(backup_orig, target)
+                elif target.is_dir():
+                    shutil.rmtree(target, ignore_errors=True)  # target was newly created
                 else:
-                    target.unlink(missing_ok=True)  # target was newly created
+                    target.unlink(missing_ok=True)
             except OSError:
                 pass
         raise
@@ -371,7 +386,10 @@ def _commit_with_rollback(staged: list[tuple[Path, Path]]) -> list[Path]:
         for tmp, _target in staged:
             try:
                 if tmp.exists():
-                    tmp.unlink()
+                    if tmp.is_dir():
+                        shutil.rmtree(tmp)
+                    else:
+                        tmp.unlink()
             except OSError:
                 pass
     return committed
@@ -388,7 +406,10 @@ def _cleanup_temps(staged: list[tuple[Path, Path]]) -> None:
     for tmp, _target in staged:
         try:
             if tmp.exists():
-                tmp.unlink()
+                if tmp.is_dir():
+                    shutil.rmtree(tmp)
+                else:
+                    tmp.unlink()
         except OSError:
             pass
 

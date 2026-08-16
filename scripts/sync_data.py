@@ -576,6 +576,32 @@ def _write_validation_report(db_path: Path, reports_dir: Path | None, skip: bool
     return report
 
 
+def _publish_reports(staging: Path, reports_dir: Path, db_sha256: str | None) -> None:
+    """Move the staged quality report into place only AFTER a successful publish
+    (P2-01): on a failed validation/publish the staged report is never promoted,
+    so data/reports/ always describes the live DB, never a rejected candidate.
+
+    The staged report was generated from the CANDIDATE before its WAL checkpoint,
+    so its db_sha256 is re-stamped with the authoritative post-publish DB sha.
+    """
+    if not staging.exists():
+        return
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("data-quality.json", "data-quality.md"):
+        staged = staging / name
+        if not staged.exists():
+            continue
+        if name.endswith(".json") and db_sha256:
+            import json as _json
+
+            data = _json.loads(staged.read_text("utf-8"))
+            data["db_sha256"] = db_sha256
+            staged.write_text(_json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
+        target = reports_dir / name
+        os.replace(staged, target)
+    shutil.rmtree(staging, ignore_errors=True)
+
+
 def run(argv: list[str] | None = None, *, loader=None, reports_dir: Path | None = None) -> int:
     """Full sync entrypoint. `loader` is injectable for tests (defaults to
     the real `load_source`); `reports_dir` overrides where reports are written."""
@@ -734,6 +760,10 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
                 "reconciled sync state from database (previous publish may not "
                 "have committed .sync_state.json)"
             )
+    # quality report is staged here and only promoted to reports_dir after a
+    # successful publish, so data/reports/ never describes a rejected candidate
+    # (P2-01).
+    staging_reports = reports_dir / ".staging"
     prev_sources = state.get("sync_data").get("sources", [])
     dropped = [s for s in prev_sources if s not in sources]
     added = [s for s in sources if s not in prev_sources]
@@ -779,7 +809,7 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
                     _build_db(conn, records_by_source, sources, partial=True,
                               run_id=run_id, source_stats=source_stats,
                               failures=failures, started_at=started_at)
-                    _write_validation_report(candidate, reports_dir, args.skip_validation)
+                    _write_validation_report(candidate, staging_reports, args.skip_validation)
                 except Exception as exc:  # noqa: BLE001
                     logger.error("could not build inspection candidate: %r", exc)
             logger.error("sync FAILED; official database unchanged")
@@ -838,7 +868,7 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
             )
             return 1
 
-        report = _write_validation_report(candidate, reports_dir, skip=False)
+        report = _write_validation_report(candidate, staging_reports, skip=False)
         if report["issue_counts"]["error"]:
             logger.error(
                 "validation: %d errors; candidate NOT published (live DB unchanged)",
@@ -887,6 +917,11 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
 
         _publish(candidate, db_path)
         db_sha = _sha256(db_path)
+        # promote the staged quality report right after the DB replace — before
+        # the manifest is written — so data/reports/ describes the live DB and
+        # the manifest's report_sha256 matches the final promoted file (P2-01).
+        # The report's db_sha256 is re-stamped with the post-publish DB sha.
+        _publish_reports(staging_reports, reports_dir, db_sha)
         report_path = reports_dir / "data-quality.json"
         report_sha = _sha256(report_path) if report_path.exists() else None
         manifest_path = manifest_path_for(db_path)
@@ -943,6 +978,7 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
             # DB + state are committed; only the manifest finalization failed.
             logger.warning("could not finalize publish manifest: %s", exc)
         logger.info("snapshot published to %s", db_path)
+        # (the staged quality report was already promoted right after publish)
 
         # optional images (only after a successful publish). The DB is already
         # published (valid canonical data); an image-stage failure is reported
@@ -1004,6 +1040,9 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
                 pass
         if not keep_candidate:
             cleanup_db_files(candidate)
+        # staged reports are either promoted (publish success) or must be
+        # discarded — never leave a stale .staging dir behind (P2-01).
+        shutil.rmtree(staging_reports, ignore_errors=True)
 
 
 # console-script alias: `sync-data` (see pyproject.toml [project.scripts])

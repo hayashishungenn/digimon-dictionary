@@ -188,6 +188,39 @@ def test_api_review_export_json_and_csv(review_db, monkeypatch):
     assert len(rows) == 7  # header + 6 items
 
 
+def test_api_review_pagination_and_category_filter_in_sql(review_db, monkeypatch):
+    """P2-03: list pagination and category filtering happen in SQL — limit/offset
+    work, total stays accurate, and a category filter composes with pagination."""
+    c = _api_client(review_db)
+    body = c.get("/api/review", params={"limit": 2, "offset": 2}).json()
+    assert len(body["items"]) == 2
+    assert body["total"] == 6
+    ids = [i["id"] for i in body["items"]]
+    # offset 0 -> ids 1..2, offset 2 -> ids 3..4 (ORDER BY id)
+    assert ids[0] > 2
+    # category filter + limit/offset
+    ext = c.get("/api/review", params={"category": "external_target", "limit": 1, "offset": 1}).json()
+    assert len(ext["items"]) == 1
+    assert ext["items"][0]["category"] == "external_target"
+    assert ext["total"] == 2
+    # count reflects the category filter (SQL COUNT)
+    stats = c.get("/api/review/stats").json()
+    assert stats["by_category"]["external_target"] == 2
+
+
+def test_api_review_export_overflow_refused(review_db, monkeypatch):
+    """P2-03: an export that would exceed the cap must be refused (413), never
+    silently truncated."""
+    from apps.api import queries as q
+
+    monkeypatch.setattr(q, "count_review_items", lambda *a, **k: 20_000)
+    c = _api_client(review_db)
+    r = c.get("/api/review/export", params={"format": "json"})
+    assert r.status_code == 413
+    r2 = c.get("/api/review/export", params={"format": "csv"})
+    assert r2.status_code == 413
+
+
 def test_review_writes_serialized_with_sync_lock(review_db, monkeypatch):
     """P1-01: API and CLI review writes must not proceed while a sync holds the
     DB lock — they return 409 / non-zero instead of racing the publish."""

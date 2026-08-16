@@ -208,6 +208,30 @@ def test_search_returns_same_entity_across_languages(client):
     assert zh == en == ja
 
 
+def test_search_detail_lookup_is_batched(fixture_db):
+    """P2-05: search must batch the detail lookup — the SQL count must not grow
+    ~1 per extra result (a limit=100 search used to run 100 extra queries)."""
+    from apps.api import queries
+
+    _path, conn = fixture_db
+
+    def count_for(limit):
+        c = {"n": 0}
+        conn.set_trace_callback(lambda _sql: c.__setitem__("n", c["n"] + 1))
+        try:
+            items = queries.search_digimon(conn, "a", limit=limit)
+        finally:
+            conn.set_trace_callback(None)
+        return c["n"], len(items)
+
+    n_small, k_small = count_for(1)
+    n_large, k_large = count_for(6)
+    assert k_small >= 1 and k_large >= k_small
+    # the batched lookup is ONE query regardless of limit — widening the result
+    # window must not add a query per extra row.
+    assert n_large - n_small <= 2
+
+
 def test_evolution_endpoint(client):
     r = client.get("/api/digimon/agumon/evolution", params={"depth": 2})
     assert r.status_code == 200

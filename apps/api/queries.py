@@ -585,12 +585,9 @@ def search_digimon(
         except sqlite3.OperationalError as exc:
             logger.warning("FTS query %r failed; falling back to LIKE results: %s", q, exc)
 
-    out = []
-    for digimon_id in rows[:limit]:
-        d = get_digimon(conn, digimon_id)
-        if d:
-            out.append(d)
-    return out
+    # P2-05: batch the detail lookup with a single WHERE id IN (...) instead of
+    # one query per result (search limit=100 used to run 100 extra queries).
+    return list_by_ids(conn, rows[:limit])
 
 
 def _search_variants(q: str) -> list[str]:
@@ -666,7 +663,18 @@ def _review_category(reason: str | None) -> str:
     return "other"
 
 
-def _review_where(status: str, entity_type: str | None, q: str | None) -> tuple[str, list[Any]]:
+def _review_category_sql() -> str:
+    """Category as a SQL CASE so filtering + count happen in the database
+    (P2-03) instead of loading every row and slicing in Python."""
+    return """CASE
+        WHEN reason LIKE '%wikitext%' THEN 'wikitext'
+        WHEN reason LIKE '%unresolved%' OR reason LIKE '%target%' THEN 'external_target'
+        WHEN reason LIKE '%ambiguous%' OR reason LIKE '%needs review%' THEN 'matching_failure'
+        WHEN reason LIKE '%conflict%' THEN 'conflict'
+        ELSE 'other' END"""
+
+
+def _review_where(status: str, entity_type: str | None, q: str | None, category: str | None = None) -> tuple[str, list[Any]]:
     where = ["status = ?"]
     params: list[Any] = [status]
     if entity_type:
@@ -676,6 +684,9 @@ def _review_where(status: str, entity_type: str | None, q: str | None) -> tuple[
         where.append("(reason LIKE ? ESCAPE '\\' OR detail LIKE ? ESCAPE '\\')")
         like = f"%{_escape_like(q)}%"
         params += [like, like]
+    if category:
+        where.append(f"({_review_category_sql()}) = ?")
+        params.append(category)
     return " AND ".join(where), params
 
 
@@ -689,21 +700,18 @@ def list_review_items(
     limit: int = 200,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
-    where, params = _review_where(status, entity_type, q)
+    where, params = _review_where(status, entity_type, q, category)
     rows = conn.execute(
         f"""SELECT id, entity_type, entity_id, reason, detail, status,
-                   created_at, resolved_at, run_id, note
-            FROM manual_review_queue WHERE {where} ORDER BY id""",
-        params,
+                   created_at, resolved_at, run_id, note,
+                   {_review_category_sql()} AS category
+            FROM manual_review_queue WHERE {where} ORDER BY id LIMIT ? OFFSET ?""",
+        params + [limit, offset],
     ).fetchall()
-    items: list[dict[str, Any]] = []
-    for r in rows:
-        cat = _review_category(r["reason"])
-        if category and cat != category:
-            continue
-        detail = json.loads(r["detail"]) if r["detail"] else {}
-        items.append({**dict(r), "detail": detail, "category": cat})
-    return items[offset : offset + limit]
+    return [
+        {**dict(r), "detail": json.loads(r["detail"]) if r["detail"] else {}}
+        for r in rows
+    ]
 
 
 def count_review_items(
@@ -714,13 +722,11 @@ def count_review_items(
     q: str | None = None,
     category: str | None = None,
 ) -> int:
-    where, params = _review_where(status, entity_type, q)
-    rows = conn.execute(
-        f"SELECT reason FROM manual_review_queue WHERE {where}", params
-    ).fetchall()
-    if category:
-        return sum(1 for r in rows if _review_category(r["reason"]) == category)
-    return len(rows)
+    where, params = _review_where(status, entity_type, q, category)
+    row = conn.execute(
+        f"SELECT COUNT(*) FROM manual_review_queue WHERE {where}", params
+    ).fetchone()
+    return int(row[0]) if row else 0
 
 
 def review_stats(conn: sqlite3.Connection) -> dict[str, Any]:

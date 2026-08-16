@@ -611,10 +611,30 @@ def run_and_write(db_path: Path, reports_dir: Path | None = None) -> dict[str, A
     finally:
         conn.close()
     report["generated_at"] = datetime.now().isoformat(timespec="seconds")
+    # P2-01: the report records which database it describes, so a reader can
+    # tell whether it matches the current live DB.
+    report["db_sha256"] = _sha256_of(db_path)
     out_dir = reports_dir or REPORTS_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "data-quality.json").write_text(
-        json.dumps(report, indent=2, ensure_ascii=False), "utf-8"
-    )
-    (out_dir / "data-quality.md").write_text(to_markdown(report), "utf-8")
+    # atomic writes (P2-01): a failed/interrupted write never leaves a
+    # truncated report that a later reader would trust.
+    _atomic_write_report(out_dir / "data-quality.json", json.dumps(report, indent=2, ensure_ascii=False))
+    _atomic_write_report(out_dir / "data-quality.md", to_markdown(report))
     return report
+
+
+def _sha256_of(path: Path) -> str | None:
+    import hashlib
+
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _atomic_write_report(path: Path, text: str) -> None:
+    import os
+
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, "utf-8")
+    os.replace(tmp, path)

@@ -171,8 +171,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "export":
+        EXPORT_CAP = 10_000
+        total = queries.count_review_items(conn, status=args.status, entity_type=args.entity_type)
+        if total > EXPORT_CAP:
+            print(
+                f"ERROR: export would be {total} rows (cap {EXPORT_CAP}); "
+                "narrow the filter (--status/--entity-type) or raise EXPORT_CAP",
+                file=sys.stderr,
+            )
+            conn.close()
+            return 1
         items = queries.list_review_items(
-            conn, status=args.status, entity_type=args.entity_type, limit=10000,
+            conn, status=args.status, entity_type=args.entity_type, limit=EXPORT_CAP,
         )
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)

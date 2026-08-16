@@ -279,6 +279,38 @@ def test_backup_schema_reflects_db_not_stale_manifest(live_db, tmp_path):
     assert meta["schema_version"] == SCHEMA_VERSION  # the DB's real version
 
 
+def test_restore_brings_back_images(live_db, tmp_path):
+    """P2-06: a backup made with --with-images must restore the image cache
+    beside the target DB, with matching file hashes."""
+    images = tmp_path / "images"
+    images.mkdir()
+    (images / "a.png").write_bytes(b"img-a")
+    (images / "thumbs").mkdir()
+    (images / "thumbs" / "a.png").write_bytes(b"thumb-a")
+
+    import pipeline.core.backup as backup_mod
+
+    orig = backup_mod.IMAGES_DIR
+    try:
+        backup_mod.IMAGES_DIR = images
+        out = tmp_path / "backups" / "with_img"
+        create_backup(db_path=live_db, out_dir=out, with_images=True,
+                      state_path=tmp_path / ".sync_state.json",
+                      manifest_path=tmp_path / ".publish_manifest.json",
+                      reports_dir=tmp_path / "reports")
+    finally:
+        backup_mod.IMAGES_DIR = orig
+    assert (out / "images" / "a.png").read_bytes() == b"img-a"
+    meta = json.loads((out / "backup.json").read_text("utf-8"))
+    assert meta["includes_images"] is True
+
+    restored = tmp_path / "restored" / "digidex.sqlite"
+    restore_backup(out, db_path=restored)
+    img_target = tmp_path / "restored" / "images"
+    assert (img_target / "a.png").read_bytes() == b"img-a"
+    assert (img_target / "thumbs" / "a.png").read_bytes() == b"thumb-a"
+
+
 def test_restore_rolls_back_on_mid_commit_failure(live_db, tmp_path, monkeypatch):
     """P1-05: if a commit-phase os.replace fails part-way, every live file —
     including the already-replaced database — must return to the original

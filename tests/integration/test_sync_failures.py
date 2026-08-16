@@ -522,6 +522,44 @@ def test_first_sync_all_empty_refuses_empty_publish(tmp_path, monkeypatch):
     assert not (tmp_path / "fresh.candidate.sqlite").exists()
 
 
+def test_failed_validation_does_not_overwrite_reports(env_db, tmp_path, monkeypatch):
+    """P2-01: a candidate that fails validation must NOT promote its report —
+    data/reports/ keeps describing the live DB, not a rejected candidate."""
+    import pipeline.validation.validator as validator
+
+    real_validate = validator.validate
+
+    def fake_validate(conn):
+        report = real_validate(conn)
+        report["issues"].append({"level": "error", "check": "injected", "message": "boom"})
+        report["issue_counts"]["error"] += 1
+        return report
+
+    monkeypatch.setattr(validator, "validate", fake_validate)
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "data-quality.json").write_text("ORIGINAL", "utf-8")
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    rc = sync_data.run(["--sources", "dapi"], loader=loader, reports_dir=reports)
+    assert rc != 0
+    assert (reports / "data-quality.json").read_text("utf-8") == "ORIGINAL"  # untouched
+    assert not (reports / ".staging").exists()  # staged report discarded
+
+
+def test_success_promotes_report_stamped_with_db_sha(env_db, tmp_path):
+    """P2-01: after a successful publish the staged report is promoted and
+    stamped with the published DB's sha-256 (report describes the live DB)."""
+    import json as _json
+
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    assert sync_data.run(["--sources", "dapi"], loader=loader,
+                         reports_dir=tmp_path / "reports") == 0
+    report = _json.loads((tmp_path / "reports" / "data-quality.json").read_text("utf-8"))
+    assert report.get("db_sha256") == db_hash(env_db)
+    assert (tmp_path / "reports" / "data-quality.md").exists()
+    assert not (tmp_path / "reports" / ".staging").exists()
+
+
 def test_image_stage_failure_distinguished_in_manifest(env_db, tmp_path, monkeypatch):
     """--images with a failing image stage publishes the canonical DB but the
     manifest records image_stage=failed and the sync_run note is updated — the
