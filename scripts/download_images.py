@@ -370,6 +370,16 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         conn.close()
 
+    # P0-2: the image pipeline modified the live DB (thumbnail rows / metadata),
+    # so refresh the manifest + report hashes to describe the new bytes (the
+    # sync image stage does the same; diagnose then reports full consistency).
+    from pipeline.core.manifest import stamp_db_hash
+
+    try:
+        stamp_db_hash(db_path)
+    except (OSError, ValueError) as exc:
+        logger.warning("could not refresh manifest/report hashes after image update: %s", exc)
+
     if failed or refused or thumb_failed:
         logger.error(
             "image pipeline finished with %d failed, %d refused (policy) and %d thumbnail failures",

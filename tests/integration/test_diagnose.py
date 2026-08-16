@@ -74,6 +74,40 @@ def test_diagnose_image_path_contract(tmp_path, capsys):
     assert contract["digimon_with_thumbnail"] == 1
 
 
+def test_diagnose_manifest_consistency(tmp_path, capsys):
+    """P0-2: diagnose reports manifest/db/report hash consistency, and flags a
+    stale manifest after the DB bytes change."""
+    from pipeline.core.manifest import (
+        build_manifest,
+        manifest_path_for,
+        write_manifest,
+    )
+    from tests.conftest import build_fixture_db
+
+    db = tmp_path / "digidex.sqlite"
+    conn = build_fixture_db(db)
+    conn.close()
+    report = tmp_path / "reports" / "data-quality.json"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    manifest = build_manifest(
+        run_id="r9", snapshot_date="2026-08-15", sources=["dapi"],
+        db_sha256="0" * 64, report_sha256="0" * 64, schema_version=8,
+        image_stage="ok", is_incremental_baseline=True, state_committed=True,
+    )
+    write_manifest(manifest, manifest_path_for(db))
+    report.write_text(json.dumps({"db_sha256": "0" * 64}), "utf-8")
+
+    rc = diagnose.main(["--json", "--db", str(db)])
+    assert rc == 0
+    cons = json.loads(capsys.readouterr().out)["manifest_consistency"]
+    assert cons["manifest_present"] is True
+    # the fake hashes don't match the real db/report -> every check is False
+    assert cons["database_sha256_matches_db"] is False
+    assert cons["report_sha256_matches_report"] is False
+    assert cons["report_db_sha256_matches_db"] is False
+    assert cons["image_stage"] == "ok"
+
+
 def test_diagnose_missing_db_is_graceful(tmp_path, capsys):
     rc = diagnose.main(["--json", "--db", str(tmp_path / "absent.sqlite")])
     assert rc == 0

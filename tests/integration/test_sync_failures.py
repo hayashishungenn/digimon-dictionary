@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 import scripts.sync_data as sync_data
-from pipeline.core.manifest import manifest_path_for, read_manifest
+from pipeline.core.manifest import consistency_report, manifest_path_for, read_manifest
 from pipeline.core.schema import SCHEMA_VERSION, connect
 from pipeline.core.sync_state import SyncState
 from tests.conftest import _mk, build_fixture_db
@@ -583,6 +583,103 @@ def test_image_stage_failure_distinguished_in_manifest(env_db, tmp_path, monkeyp
     note = conn.execute("SELECT note FROM sync_run ORDER BY rowid DESC LIMIT 1").fetchone()["note"]
     conn.close()
     assert "image stage failed" in (note or "")
+
+
+def test_image_stage_checkpoint_failure_not_ok(env_db, tmp_path, monkeypatch):
+    """P0-2: a failed WAL checkpoint in the image stage must exit non-zero and
+    MUST NOT produce image_stage=ok — the recomputed hashes may describe an
+    uncheckpointed file, and diagnose must be able to see the mismatch."""
+    import scripts.download_images as dl
+
+    real_checkpoint = sync_data.checkpoint_and_close
+    live = str(Path(env_db).resolve())
+
+    def fail_live_checkpoint(conn):
+        try:
+            rows = conn.execute("PRAGMA database_list").fetchall()
+            is_live = any(str(Path(r[2]).resolve()) == live for r in rows if r[1] == "main")
+        except sqlite3.Error:
+            is_live = False
+        if is_live:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+            return False
+        return real_checkpoint(conn)
+
+    monkeypatch.setattr(sync_data, "checkpoint_and_close", fail_live_checkpoint)
+
+    # an image stage that touches the live DB so the pre/post file hashes differ
+    def fake_ensure_thumbnails(conn, force=False):
+        conn.execute("UPDATE digimon SET updated_at=datetime('now') WHERE id=1")
+        conn.commit()
+        return (0, 0)
+
+    monkeypatch.setattr(dl, "ensure_thumbnails", fake_ensure_thumbnails)
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    rc = sync_data.run(["--sources", "dapi", "--images"], loader=loader,
+                       reports_dir=tmp_path / "reports")
+    assert rc != 0
+    manifest = read_manifest(manifest_path_for(env_db))
+    assert manifest["image_stage"] == "failed"  # never ok
+    # canonical DB is published, but the hash record is honestly stale
+    assert digimon_count(env_db) == len(SUCCESS_RECORDS)
+    assert manifest["database_sha256"] != db_hash(env_db)
+    assert consistency_report(env_db)["database_sha256_matches_db"] is False
+
+
+def test_image_stage_restamp_failure_not_ok(env_db, tmp_path, monkeypatch):
+    """P0-2: when the post-image report re-stamp fails the run must exit
+    non-zero, image_stage must not be ok, and neither the stale report hash nor
+    a fresh-looking database hash may be recorded — diagnose sees the split."""
+    import scripts.download_images as dl
+
+    def fake_ensure_thumbnails(conn, force=False):
+        conn.execute("UPDATE digimon SET updated_at=datetime('now') WHERE id=1")
+        conn.commit()
+        return (0, 0)
+
+    def fail_restamp(report_path, db_sha256):
+        raise OSError("report locked")
+
+    monkeypatch.setattr(dl, "ensure_thumbnails", fake_ensure_thumbnails)
+    monkeypatch.setattr(sync_data, "_restamp_report_db_sha", fail_restamp)
+    report_path = tmp_path / "reports" / "data-quality.json"
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    rc = sync_data.run(["--sources", "dapi", "--images"], loader=loader,
+                       reports_dir=tmp_path / "reports")
+    assert rc != 0
+    manifest = read_manifest(manifest_path_for(env_db))
+    assert manifest["image_stage"] == "failed"
+    # the report was NOT re-stamped and the DB was NOT recorded as fresh
+    report = json.loads(report_path.read_text("utf-8"))
+    assert report["db_sha256"] != db_hash(env_db)
+    assert manifest["database_sha256"] != db_hash(env_db)
+    cons = consistency_report(env_db)
+    assert cons["database_sha256_matches_db"] is False
+    assert cons["report_db_sha256_matches_db"] is False
+
+
+def test_image_stage_manifest_write_failure_not_ok(env_db, tmp_path, monkeypatch):
+    """P0-2: when the image-stage manifest write fails the run must exit
+    non-zero and the on-disk manifest must not claim image_stage=ok."""
+    real_write = sync_data.write_manifest
+
+    def fail_image_stage_write(manifest, path=None):
+        if manifest.get("image_stage") in ("ok", "failed"):
+            raise OSError("manifest dir read-only")
+        return real_write(manifest, path)
+
+    monkeypatch.setattr(sync_data, "write_manifest", fail_image_stage_write)
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    rc = sync_data.run(["--sources", "dapi", "--images"], loader=loader,
+                       reports_dir=tmp_path / "reports")
+    assert rc != 0
+    manifest = read_manifest(manifest_path_for(env_db))
+    # the on-disk manifest still describes the pre-image-stage state, NOT ok
+    assert manifest["image_stage"] != "ok"
+    assert manifest["state_committed"] is True  # DB + state committed honestly
 
 
 def test_publish_before_state_interruption_is_recoverable(env_db, tmp_path, monkeypatch):

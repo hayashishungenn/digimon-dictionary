@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 from pipeline.core.config import DB_PATH, IMAGES_DIR, REPORTS_DIR
-from pipeline.core.manifest import manifest_path_for, read_manifest
+from pipeline.core.manifest import consistency_report, manifest_path_for, read_manifest
 
 
 def _is_bad_stored_path(value: str) -> bool:
@@ -183,6 +183,7 @@ def main(argv: list[str] | None = None) -> int:
         },
         "image_cache_dir": str(IMAGES_DIR),
         "quality_report_matches_db": _report_matches_db(db_path, db),
+        "manifest_consistency": consistency_report(db_path),
     }
 
     if args.json:
@@ -220,6 +221,12 @@ def main(argv: list[str] | None = None) -> int:
               f"baseline={m['is_incremental_baseline']}")
     else:
         print("manifest:  (none — run a publish to create one)")
+    mc = report["manifest_consistency"]
+    if mc.get("manifest_present"):
+        print(f"consistency: db={mc['database_sha256_matches_db']} "
+              f"report_sha={mc['report_sha256_matches_report']} "
+              f"report_db_sha={mc['report_db_sha256_matches_db']} "
+              f"image_stage={mc['image_stage']} state_committed={mc['state_committed']}")
     print(f"images:    {report['image_cache_dir']} (local cache, not committed)")
     return 0
 

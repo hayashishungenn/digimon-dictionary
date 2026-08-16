@@ -22,8 +22,6 @@ console script: migrate-image-paths
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
 import logging
 import os
 import sqlite3
@@ -40,7 +38,7 @@ from pipeline.core.images import (
     rebase_legacy,
 )
 from pipeline.core.lock import db_lock_path, sync_lock
-from pipeline.core.manifest import manifest_path_for, read_manifest, write_manifest
+from pipeline.core.manifest import stamp_db_hash
 from pipeline.core.schema import checkpoint_and_close, connect, create_schema, verify_integrity
 
 logger = logging.getLogger("migrate-image-paths")
@@ -51,25 +49,11 @@ FAIL_UNLOCATABLE = "unlocatable path"
 
 def _restamp_hashes(db_path: Path) -> None:
     """Refresh manifest + report hashes after the migration changed the DB
-    bytes (self-contained; P0-2 moves this to manifest.stamp_db_hash). Best
+    bytes (shared with the image stage via manifest.stamp_db_hash). Best
     effort — a failure only warns so a successful migration is not aborted."""
-    manifest_path = manifest_path_for(db_path)
-    manifest = read_manifest(manifest_path)
-    if manifest is None:
-        return
-    db_sha = hashlib.sha256(db_path.read_bytes()).hexdigest()
-    report_json = db_path.parent / "reports" / "data-quality.json"
     try:
-        if report_json.exists():
-            report = json.loads(report_json.read_text("utf-8"))
-            report["db_sha256"] = db_sha
-            tmp = report_json.with_name(report_json.name + ".tmp")
-            tmp.write_text(json.dumps(report, indent=2, ensure_ascii=False), "utf-8")
-            os.replace(tmp, report_json)
-            manifest["report_sha256"] = hashlib.sha256(report_json.read_bytes()).hexdigest()
-        manifest["database_sha256"] = db_sha
-        write_manifest(manifest, manifest_path)
-    except OSError as exc:
+        stamp_db_hash(db_path)
+    except (OSError, ValueError) as exc:
         logger.warning("could not refresh manifest/report hashes after migration: %s", exc)
 
 

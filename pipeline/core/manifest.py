@@ -108,3 +108,75 @@ def build_manifest(
         "state_committed": state_committed,
         "notes": notes,
     }
+
+
+def stamp_db_hash(
+    db_path: str | Path,
+    report_json: str | Path | None = None,
+    manifest_path: str | Path | None = None,
+) -> dict | None:
+    """Refresh the manifest + report hashes after the DB bytes changed.
+
+    Used by the image stage (P0-2) and the image-path migration (P0-1): recompute
+    ``database_sha256``, re-stamp the JSON report's ``db_sha256`` and recompute
+    ``manifest.report_sha256`` from the (possibly re-stamped) report file. Writes
+    are atomic. Returns the updated manifest, or None when no manifest exists.
+    Raises OSError/ValueError so callers can exit non-zero instead of silently
+    recording a stale hash.
+    """
+    import hashlib
+
+    db = Path(db_path)
+    manifest_p = Path(manifest_path or manifest_path_for(db))
+    report = Path(report_json) if report_json else db.parent / "reports" / "data-quality.json"
+    manifest = read_manifest(manifest_p)
+    if manifest is None:
+        return None
+    db_sha = hashlib.sha256(db.read_bytes()).hexdigest()
+    if report.exists():
+        data = json.loads(report.read_text("utf-8"))
+        data["db_sha256"] = db_sha
+        tmp = report.with_name(report.name + ".tmp")
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
+        os.replace(tmp, report)
+        manifest["report_sha256"] = hashlib.sha256(report.read_bytes()).hexdigest()
+    manifest["database_sha256"] = db_sha
+    write_manifest(manifest, manifest_p)
+    return manifest
+
+
+def consistency_report(db_path: str | Path) -> dict:
+    """Cross-check manifest / report / database hashes (P0-2, diagnose).
+
+    Returns booleans per relationship, or None when a side is missing, plus the
+    manifest's run_id / image_stage / state_committed so diagnose can surface
+    "database published but image cache / report / manifest incomplete".
+    """
+    import hashlib
+
+    db = Path(db_path)
+    manifest = read_manifest(manifest_path_for(db)) or {}
+    manifest_present = bool(manifest)
+    db_sha = hashlib.sha256(db.read_bytes()).hexdigest() if db.exists() else None
+    report = db.parent / "reports" / "data-quality.json"
+    report_sha = hashlib.sha256(report.read_bytes()).hexdigest() if report.exists() else None
+    report_db_sha = None
+    if report.exists():
+        try:
+            report_db_sha = json.loads(report.read_text("utf-8")).get("db_sha256")
+        except (OSError, ValueError):
+            report_db_sha = None
+    return {
+        "manifest_present": manifest_present,
+        "db_exists": db.exists(),
+        "database_sha256_matches_db": (
+            manifest.get("database_sha256") == db_sha if manifest_present and db_sha else None
+        ),
+        "report_sha256_matches_report": (
+            manifest.get("report_sha256") == report_sha if manifest_present and report_sha else None
+        ),
+        "report_db_sha256_matches_db": (report_db_sha == db_sha if report_db_sha and db_sha else None),
+        "run_id": manifest.get("run_id"),
+        "image_stage": manifest.get("image_stage"),
+        "state_committed": manifest.get("state_committed"),
+    }

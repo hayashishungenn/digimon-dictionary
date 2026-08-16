@@ -1074,34 +1074,53 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
             # The image stage (and the audit note above) modified the live DB, so
             # the post-publish db_sha256 / report_sha256 recorded at publish time
             # are now stale (P1-1). Checkpoint the WAL so the file hash reflects
-            # the true DB, then recompute and re-stamp manifest + report.
+            # the true DB, then recompute and re-stamp manifest + report. Any of
+            # these failing must NOT produce image_stage=ok or a stale hash
+            # masquerading as fresh (P0-2).
             chk = connect(db_path)
-            if not checkpoint_and_close(chk):
-                logger.warning(
-                    "image stage: WAL checkpoint failed; db_sha256 may describe "
-                    "the uncheckpointed file"
+            checkpoint_ok = checkpoint_and_close(chk)
+            if not checkpoint_ok:
+                logger.error(
+                    "image stage: WAL checkpoint failed; db_sha256 may describe the "
+                    "uncheckpointed file — DATABASE PUBLISHED but hash records stale"
                 )
-            db_sha = _sha256(db_path)
-            try:
-                _restamp_report_db_sha(report_path, db_sha)
-            except OSError as exc:
-                logger.warning(
-                    "could not re-stamp report db_sha256 after image stage: %s", exc
-                )
-            new_report_sha = _sha256(report_path) if report_path.exists() else None
-            manifest["database_sha256"] = db_sha
-            if new_report_sha:
-                manifest["report_sha256"] = new_report_sha
-            manifest["image_stage"] = "ok" if not (failed or thumb_failed) else "failed"
+            db_sha = _sha256(db_path) if checkpoint_ok else None
+            restamp_ok = True
+            if db_sha:
+                try:
+                    _restamp_report_db_sha(report_path, db_sha)
+                except (OSError, ValueError) as exc:
+                    restamp_ok = False
+                    logger.error(
+                        "could not re-stamp report db_sha256 after image stage: %s — "
+                        "DATABASE PUBLISHED but the report hash was NOT refreshed; "
+                        "the old report file is preserved for recovery", exc,
+                    )
+            if restamp_ok and db_sha:
+                manifest["database_sha256"] = db_sha
+                new_report_sha = _sha256(report_path) if report_path.exists() else None
+                if new_report_sha:
+                    manifest["report_sha256"] = new_report_sha
+            manifest["image_stage"] = (
+                "failed" if (failed or thumb_failed or not checkpoint_ok or not restamp_ok)
+                else "ok"
+            )
             try:
                 write_manifest(manifest, manifest_path)
+                manifest_ok = True
             except OSError as exc:
-                logger.warning("could not record image stage in manifest: %s", exc)
-            if failed or thumb_failed:
+                manifest_ok = False
                 logger.error(
-                    "image stage had %d download / %d thumbnail failures; DB published "
-                    "but image cache incomplete — re-run scripts/download_images.py",
-                    failed, thumb_failed,
+                    "could not record image stage in manifest: %s — DATABASE PUBLISHED "
+                    "but the manifest was not updated", exc,
+                )
+            if failed or thumb_failed or not checkpoint_ok or not restamp_ok or not manifest_ok:
+                logger.error(
+                    "image stage incomplete: downloads=%d thumbnails=%d "
+                    "checkpoint=%s restamp=%s manifest=%s — the canonical DB is "
+                    "published but image/hash records are incomplete; re-run "
+                    "scripts/download_images.py or sync_data.py to reconcile",
+                    failed, thumb_failed, checkpoint_ok, restamp_ok, manifest_ok,
                 )
                 return 1
         return 0
