@@ -277,3 +277,43 @@ def test_backup_schema_reflects_db_not_stale_manifest(live_db, tmp_path):
     out = _backup(live_db, tmp_path)
     meta = json.loads((out / "backup.json").read_text("utf-8"))
     assert meta["schema_version"] == SCHEMA_VERSION  # the DB's real version
+
+
+def test_restore_rolls_back_on_mid_commit_failure(live_db, tmp_path, monkeypatch):
+    """P1-05: if a commit-phase os.replace fails part-way, every live file —
+    including the already-replaced database — must return to the original
+    snapshot (DB + state/manifest/reports stay from one version)."""
+    import os as _os
+    import shutil
+
+    backup = _backup(live_db, tmp_path)
+    live_dir = tmp_path / "live"
+    live_dir.mkdir()
+    db_target = live_dir / "digidex.sqlite"
+    shutil.copy2(live_db, db_target)  # the current live DB
+    state_target = live_dir / ".sync_state.json"
+    state_target.write_text("ORIGINAL-STATE", "utf-8")
+
+    real_replace = _os.replace
+    failed_once = {"n": 0}
+
+    def failing_replace(src, dst):
+        # fail only the FIRST replace onto the state target (the commit); the
+        # rollback restore of the original also targets it and must succeed
+        if str(dst) == str(state_target) and failed_once["n"] == 0:
+            failed_once["n"] += 1
+            raise OSError("simulated mid-commit failure")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(_os, "replace", failing_replace)
+
+    with pytest.raises(OSError):
+        restore_backup(backup, db_path=db_target, state_path=state_target)
+
+    # the DB was committed first, then rolled back to the original bytes
+    assert db_hash(db_target) == db_hash(live_db)
+    # the state file that was never committed stays untouched
+    assert state_target.read_text("utf-8") == "ORIGINAL-STATE"
+    # no rollback/temp files left behind
+    assert not list(live_dir.glob("*.rollback"))
+    assert not list(live_dir.glob("*.restore.tmp"))

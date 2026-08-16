@@ -313,11 +313,67 @@ def restore_backup(
     if dry_run:
         return [t for _, t in staged]
 
-    # commit phase: only now touch the live paths
+    # commit phase — serialized with the sync pipeline and made rollback-safe
+    # (P1-05): every live target is first moved aside to a `.rollback` copy,
+    # then the staged file is atomically moved in. If ANY replace fails, every
+    # already-committed target is restored from its rollback copy, so all live
+    # files stay from a single snapshot (DB + state + manifest + reports).
+    from pipeline.core.lock import SyncLockError, db_lock_path, sync_lock
+
+    try:
+        with sync_lock(db_lock_path(db_path)):
+            committed = _commit_with_rollback(staged)
+    except SyncLockError as exc:
+        raise BackupError(f"sync in progress; cannot restore: {exc}") from exc
+    return committed
+
+
+def _commit_with_rollback(staged: list[tuple[Path, Path]]) -> list[Path]:
     committed: list[Path] = []
-    for tmp, target in staged:
-        os.replace(tmp, target)
-        committed.append(target)
+    rolled_back: list[tuple[Path, Path | None]] = []  # (target, original_backup)
+    try:
+        for tmp, target in staged:
+            backup_orig: Path | None = None
+            if target.exists():
+                backup_orig = target.with_name(target.name + ".rollback")
+                os.replace(target, backup_orig)  # move the original aside
+            try:
+                os.replace(tmp, target)  # atomic replace
+            except OSError:
+                # put this target's original back immediately
+                if backup_orig is not None and backup_orig.exists():
+                    os.replace(backup_orig, target)
+                raise
+            rolled_back.append((target, backup_orig))
+            committed.append(target)
+    except Exception:
+        # roll back every already-committed target to its original snapshot
+        for target, backup_orig in reversed(rolled_back):
+            try:
+                if backup_orig is not None and backup_orig.exists():
+                    os.replace(backup_orig, target)
+                else:
+                    target.unlink(missing_ok=True)  # target was newly created
+            except OSError:
+                pass
+        raise
+    finally:
+        # drop the rollback copies on success (they no longer exist on failure
+        # because the originals were restored over them)
+        for _target, backup_orig in rolled_back:
+            if backup_orig is not None:
+                try:
+                    backup_orig.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        # remove staged temps that were never moved into place (on success they
+        # were os.replace'd to their targets and no longer exist)
+        for tmp, _target in staged:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
     return committed
 
 
