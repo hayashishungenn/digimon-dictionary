@@ -37,3 +37,8 @@ export function toggleFavorite(id: number): boolean {
 	save(favorites.ids);
 	return i < 0;
 }
+
+export function clearFavorites(): void {
+	favorites.ids = [];
+	save(favorites.ids);
+}

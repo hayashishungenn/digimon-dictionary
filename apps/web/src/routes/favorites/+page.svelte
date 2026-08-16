@@ -4,7 +4,7 @@
 	import DigimonCard from '$lib/components/DigimonCard.svelte';
 	import ErrorState from '$lib/components/ErrorState.svelte';
 	import SkeletonGrid from '$lib/components/SkeletonGrid.svelte';
-	import { favorites } from '$lib/stores/favorites.svelte';
+	import { favorites, clearFavorites } from '$lib/stores/favorites.svelte';
 	import { clearHistory, clearPersonal, personal, personalCount } from '$lib/stores/personal.svelte';
 
 	let items = $state<DigimonListItem[]>([]);
@@ -107,7 +107,7 @@
 		{#if confirmClear}
 			<span class="confirm-inline">
 				<span class="faint">确认清空全部收藏/备注/标签/历史？</span>
-				<button class="btn btn-danger" onclick={() => { clearPersonal(); favorites.ids.length = 0; confirmClear = false; }}>确认清空</button>
+				<button class="btn btn-danger" onclick={() => { clearPersonal(); clearFavorites(); confirmClear = false; }}>确认清空</button>
 				<button class="btn" onclick={() => (confirmClear = false)}>取消</button>
 			</span>
 		{:else}

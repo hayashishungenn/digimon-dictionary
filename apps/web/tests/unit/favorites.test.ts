@@ -42,4 +42,14 @@ describe('favorites store (localStorage persistence)', () => {
 		const { isFavorite } = await loadStore();
 		expect(isFavorite(1)).toBe(false);
 	});
+
+	it('clearFavorites empties and persists (survives reload)', async () => {
+		const store = await loadStore();
+		store.toggleFavorite(7);
+		store.toggleFavorite(9);
+		expect(store.isFavorite(7)).toBe(true);
+		store.clearFavorites();
+		expect(store.isFavorite(7)).toBe(false);
+		expect(JSON.parse(localStorage.getItem(KEY) ?? '[]')).toEqual([]);
+	});
 });

@@ -136,6 +136,10 @@ test('favorites page shows personal data and clearing it requires confirmation',
 	await page.getByRole('button', { name: '清除全部个人数据' }).click();
 	await page.getByRole('button', { name: '确认清空' }).click();
 	await expect(page.locator('.personal-hint')).toHaveCount(0);
+	// the clear persists: reload does NOT restore the favorite or the hint
+	await page.reload();
+	await expect(page.getByText('还没有收藏任何数码兽')).toBeVisible();
+	await expect(page.locator('.personal-hint')).toHaveCount(0);
 });
 
 test('missing image shows placeholder, not broken image', async ({ page }) => {
