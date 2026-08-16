@@ -114,7 +114,8 @@ def test_extract_template_roundtrip():
 
 def test_dapi_pagination_ignores_broken_totalPages():
     """digi-api reports totalPages=1 even when a 2nd page exists (its known bug).
-    The adapter must paginate until rows run short, not trust totalPages."""
+    The adapter must paginate until rows run short, not trust totalPages, and
+    report that the pagination completed (P1-02)."""
     from pipeline.sources.dapi import DapiAdapter
 
     pages = {
@@ -128,8 +129,27 @@ def test_dapi_pagination_ignores_broken_totalPages():
         def get_json(self, url, params=None):
             return pages[params["page"]]
 
-    ids = DapiAdapter()._fetch_all_ids(FakeFetcher())
+    ids, complete, expected = DapiAdapter()._fetch_all_ids(FakeFetcher())
     assert len(ids) == 1488
+    assert complete is True  # ended on a short page
+    assert expected == 1488
+
+
+def test_dapi_pagination_cap_reports_incomplete():
+    """P1-02: if every page returns a FULL page up to the defensive cap, the
+    fetch is incomplete (a site change could be silently truncating the list)."""
+    from pipeline.sources.dapi import DapiAdapter
+
+    full = {"content": [{"id": i, "name": f"D{i}"} for i in range(1000)], "pageable": {}}
+
+    class AlwaysFull:
+        def get_json(self, url, params=None):
+            return full
+
+    ids, complete, expected = DapiAdapter()._fetch_all_ids(AlwaysFull())
+    # 51 pages of 1000 = 51000, way more than the real 1488 — the cap fired
+    assert len(ids) >= 51000
+    assert complete is False
 
 
 def test_fetcher_force_bypasses_cache(tmp_path):

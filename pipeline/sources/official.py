@@ -95,12 +95,16 @@ class OfficialAdapter(SourceAdapter):
         )
 
     # ---------------------------------------------------------------- lists
-    def _fetch_list(self, fetcher: Any, lang: str) -> list[ListRow]:
+    def _fetch_list(self, fetcher: Any, lang: str) -> tuple[list[ListRow], bool]:
+        """Fetch one language's list; returns (rows, complete). ``complete`` is
+        False when the defensive offset cap was reached without the server
+        signalling the end (P1-02)."""
         sub = LANGUAGES[lang]
         url = f"{REFERENCE_URL}/{sub}/request.php"
         all_rows: list[ListRow] = []
         offset = 0
         pages: list[dict[str, Any]] = []
+        complete = False
         while offset <= 5000:  # defensive cap (expected: 0..1248)
             payload = fetcher.get_json(
                 url,
@@ -118,10 +122,11 @@ class OfficialAdapter(SourceAdapter):
             all_rows.extend(parse_list_rows(payload, lang))
             next_off = payload.get("next")
             if next_off is None or int(next_off) == -1 or int(next_off) <= offset:
+                complete = True  # server signalled the end
                 break
             offset = int(next_off)
         save_raw("official", f"list_{lang}", pages, meta={"source_url": url, "language": lang})
-        return all_rows
+        return all_rows, complete
 
     # -------------------------------------------------------------- details
     def _fetch_detail(self, fetcher: Any, slug: str) -> dict[str, Any]:
@@ -166,8 +171,10 @@ class OfficialAdapter(SourceAdapter):
         slug_xab: dict[str, bool] = {}
         slug_level2: dict[str, str] = {}  # Xros Wars marker (level_2)
         all_slugs: list[str] = []
+        list_complete = True
         for lang in self.languages:
-            rows = self._fetch_list(of, lang)
+            rows, lang_complete = self._fetch_list(of, lang)
+            list_complete = list_complete and lang_complete
             logger.info("official: %s list -> %d rows", lang, len(rows))
             for r in rows:
                 all_slugs.append(r.directory_name)
@@ -259,6 +266,9 @@ class OfficialAdapter(SourceAdapter):
             if rel:
                 rec.extra["related"] = rel
             records.append(rec)
+        # P1-02: report completeness so the pipeline refuses to publish when a
+        # language list hit the defensive offset cap (raw_completeness=False).
+        self._report(parsed=len(records), expected=len(slugs), complete=list_complete)
         return records
 
 

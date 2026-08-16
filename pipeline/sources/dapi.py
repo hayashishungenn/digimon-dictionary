@@ -55,26 +55,35 @@ class DapiAdapter(SourceAdapter):
         self.rate_per_second = rate_per_second
         self.max_concurrency = max_concurrency
 
-    def _fetch_all_ids(self, fetcher: Any) -> list[dict[str, Any]]:
+    def _fetch_all_ids(self, fetcher: Any) -> tuple[list[dict[str, Any]], bool, int | None]:
         """Fetch the full list via pageSize=1000 pagination.
 
         NOTE: digi-api's `pageable.totalPages` is unreliable (reports 1 even
         when more pages exist), so pagination must NOT trust totalPages. We
         stop when a page returns fewer rows than pageSize (or an empty page).
+        Returns ``(content, complete, expected)`` — ``complete`` is False when
+        the defensive page cap was reached without a short page (P1-02).
         """
         content: list[dict[str, Any]] = []
+        complete = False
+        expected: int | None = None
         page = 0
         while page <= 50:  # defensive cap (2 pages expected)
             payload = fetcher.get_json(
                 f"{API_BASE}/digimon", params={"pageSize": 1000, "page": page}
             )
             page_content = payload.get("content", [])
+            if expected is None:
+                expected = (payload.get("pageable") or {}).get("totalElements")
+                if isinstance(expected, bool):
+                    expected = None
             content.extend(page_content)
             if not page_content or len(page_content) < 1000:
+                complete = True  # short page -> pagination ended naturally
                 break
             page += 1
         save_raw("dapi", "list", content, meta={"source_url": f"{API_BASE}/digimon", "total": len(content)})
-        return content
+        return content, complete, expected
 
     def _fetch_detail(self, fetcher: Any, dapi_id: int) -> dict[str, Any] | None:
         try:
@@ -88,7 +97,7 @@ class DapiAdapter(SourceAdapter):
         from pipeline.core.request import Fetcher
 
         list_fetcher = fetcher
-        ids = self._fetch_all_ids(list_fetcher)
+        ids, list_complete, expected = self._fetch_all_ids(list_fetcher)
         logger.info("dapi: list -> %d digimon", len(ids))
         save_raw("dapi", "list_index", [{"id": d["id"], "name": d["name"]} for d in ids],
                  meta={"source_url": f"{API_BASE}/digimon"})
@@ -128,6 +137,9 @@ class DapiAdapter(SourceAdapter):
                 f"dapi: {len(failed)} digimon details could not be fetched after retries: "
                 f"{failed[:20]}"
             )
+        # P1-02: report completeness so the pipeline refuses to publish when the
+        # list pagination hit its defensive cap (raw_completeness=False).
+        self._report(parsed=len(records), expected=expected, complete=list_complete)
         return records
 
     def _to_record(self, rec: dict[str, Any]) -> SourceDigimon:

@@ -112,6 +112,18 @@ class SourceAdapter(ABC):
     def fetch(self, fetcher: Any, force: bool = False) -> list[SourceDigimon]:
         """Download, cache raw, parse, and return normalized records."""
 
+    def __init__(self) -> None:
+        # Populated by fetch() so the pipeline can audit completeness (P1-02):
+        # parsed_count, expected_count (when known), raw_completeness.
+        self.fetch_report: dict[str, Any] | None = None
+
+    def _report(self, *, parsed: int, expected: int | None, complete: bool) -> None:
+        self.fetch_report = {
+            "parsed_count": parsed,
+            "expected_count": expected,
+            "raw_completeness": complete,
+        }
+
     @property
     def raw_dir(self) -> Path:
         return RAW_SOURCES[self.source]

@@ -25,9 +25,10 @@ from tests.conftest import _mk, build_fixture_db
 # helpers
 # ---------------------------------------------------------------------------
 class FakeAdapter:
-    def __init__(self, records, error=None):
+    def __init__(self, records, error=None, fetch_report=None):
         self.records = records
         self.error = error
+        self.fetch_report = fetch_report  # P1-02: completeness report
 
     def fetch(self, fetcher, force=False):
         if self.error is not None:
@@ -36,10 +37,16 @@ class FakeAdapter:
 
 
 def make_loader(spec):
-    """spec: {source: (records, error|None)}; unspecified sources return empty."""
+    """spec: {source: (records, error|None)} or {source: (records, error|None, fetch_report|None)};
+    unspecified sources return empty (no fetch_report -> treated complete)."""
     def loader(name):
-        records, error = spec.get(name, ([], None))
-        return FakeAdapter(records, error)
+        entry = spec.get(name, ([], None, None))
+        if len(entry) == 2:
+            records, error = entry
+            report = None
+        else:
+            records, error, report = entry
+        return FakeAdapter(records, error, report)
 
     return loader
 
@@ -468,6 +475,37 @@ def test_candidate_corruption_keeps_db(env_db, tmp_path, monkeypatch):
     # corrupt candidate is discarded, nothing leaks
     assert not (tmp_path / "digidex.candidate.sqlite").exists()
     assert candidate_sidecars(tmp_path) == []
+
+
+def test_incomplete_fetch_is_refused(env_db, tmp_path):
+    """P1-02: an adapter reporting raw_completeness=False (e.g. pagination hit
+    its defensive cap) must abort the sync — the live DB stays unchanged."""
+    before = db_hash(env_db)
+    incomplete = {"raw_completeness": False, "expected_count": 1488, "parsed_count": 300}
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None, incomplete)})
+    rc = sync_data.run(["--sources", "dapi"], loader=loader, reports_dir=tmp_path / "reports")
+    assert rc != 0
+    assert db_hash(env_db) == before
+    assert not (tmp_path / "digidex.candidate.sqlite").exists()
+
+
+def test_first_sync_all_empty_refuses_empty_publish(tmp_path, monkeypatch):
+    """P1-02: on a first sync, if every source comes back empty the candidate
+    would be a blank encyclopedia — the run must refuse to publish."""
+    from pipeline.core.schema import connect, create_schema
+
+    db = tmp_path / "fresh.sqlite"
+    conn = connect(db)
+    create_schema(conn)
+    conn.close()
+    monkeypatch.setenv("DIGIDEX_DB", str(db))
+
+    loader = make_loader({})  # every source returns empty
+    rc = sync_data.run(["--sources", "dapi,official"], loader=loader,
+                       reports_dir=tmp_path / "reports")
+    assert rc != 0
+    assert digimon_count(db) == 0  # nothing published
+    assert not (tmp_path / "fresh.candidate.sqlite").exists()
 
 
 def test_image_stage_failure_distinguished_in_manifest(env_db, tmp_path, monkeypatch):

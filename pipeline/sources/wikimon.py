@@ -303,4 +303,7 @@ class WikimonAdapter(SourceAdapter):
                 records.append(rec)
         logger.info("wikimon: %d digimon records parsed", len(records))
         wf.close()
+        # P1-02: a category whose pages were not all fetched (missing revisions)
+        # must be flagged incomplete so the pipeline refuses to publish.
+        self._report(parsed=len(records), expected=len(titles), complete=len(wikitexts) == len(titles))
         return records

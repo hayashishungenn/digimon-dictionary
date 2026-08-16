@@ -188,9 +188,14 @@ def _fetch_sources(sources: list[str], fetcher: Fetcher, force: bool,
     Returns ``(records_by_source, failures, source_stats)``. ``source_stats``
     holds per-source started_at / payload_hash / raw_completeness / parsed /
     failed so a ``source_sync`` row can be written. Any exception (including a
-    source that now returns empty after previously yielding data) is a hard
-    failure: the caller must abort without publishing.
+    source that now returns empty after previously yielding data, or an adapter
+    reporting an incomplete fetch — P1-02) is a hard failure: the caller must
+    abort without publishing.
     """
+    # Sources that must never silently lose data once they have yielded records:
+    # a source returning empty after a populated history is a regression (P1-02).
+    # A first-sync "everything empty" case is separately refused by the
+    # empty-database publish gate in _run_locked.
     records_by_source: dict[str, list] = {}
     failures: dict[str, Exception] = {}
     source_stats: dict[str, dict] = {}
@@ -202,11 +207,19 @@ def _fetch_sources(sources: list[str], fetcher: Fetcher, force: bool,
         try:
             adapter = loader(name)
             records = adapter.fetch(fetcher, force=force)
+            report = getattr(adapter, "fetch_report", None) or {}
+            complete = bool(report.get("raw_completeness", True))
+            expected = report.get("expected_count")
             prev = state.previous_records(name)
             if not records and prev > 0:
                 raise RuntimeError(
                     f"source {name} returned empty but previously had {prev} records "
                     f"(possible site change / failed pagination)"
+                )
+            if not complete:
+                raise RuntimeError(
+                    f"source {name} fetch was incomplete (parsed {len(records)}, "
+                    f"expected {expected or '?'}); refusing to publish"
                 )
             records_by_source[name] = records
             if persist_raw:
@@ -219,9 +232,10 @@ def _fetch_sources(sources: list[str], fetcher: Fetcher, force: bool,
             source_stats[name] = {
                 "started_at": started,
                 "payload_hash": _records_hash(records),
-                "raw_completeness": True,
+                "raw_completeness": 1 if complete else 0,
                 "parsed": len(records),
                 "failed": 0,
+                "expected_count": expected,
             }
             logger.info("%s: %d records (hash %s)", name, len(records), source_stats[name]["payload_hash"])
         except Exception as exc:  # noqa: BLE001
@@ -793,6 +807,19 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
         snap_date = _build_db(conn, records_by_source, sources, partial=partial,
                               run_id=run_id, source_stats=source_stats,
                               failures=failures, started_at=started_at)
+
+        # P1-02: on a FIRST sync, never publish an empty database — if every
+        # source came back empty the candidate would silently become a blank
+        # encyclopedia. Refuse (live DB unchanged) instead.
+        if existing == 0:
+            candidate_count = conn.execute("SELECT COUNT(*) FROM digimon").fetchone()[0]
+            if candidate_count == 0:
+                logger.error(
+                    "candidate has 0 digimon on a first sync; refusing to publish "
+                    "an empty database (live DB unchanged)"
+                )
+                cleanup_db_files(candidate)
+                return 1
 
         # candidate validation is a publication gate (T1.4 / T2.10 / P0-2).
         # --skip-validation is a diagnosis/dev flag only: it must never let an

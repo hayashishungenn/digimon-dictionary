@@ -58,6 +58,9 @@ class DigiDbAdapter:
             )
             records.append(rec)
         logger.info("digidb: %d game-stat records loaded", len(records))
+        # digidb is optional; a missing local dataset is an explicit empty
+        # (complete) — the pipeline's required-source rules never apply to it.
+        self._report(parsed=len(records), expected=len(records), complete=True)
         return records
 
 
