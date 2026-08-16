@@ -291,7 +291,7 @@
 	<ErrorState message={error} retry={() => { error = null; load(); }} />
 {/if}
 
-<div class="hero">
+<div class="hero fade-in">
 	<h1 class="hero-title">数码宝贝全图鉴</h1>
 	<p class="hero-sub">
 		三语言 Canonical 数据库 · {metaState.meta?.counts.total ?? '—'} 只收录
@@ -405,7 +405,7 @@
 		</div>
 	{/if}
 {:else}
-	<div class="grid">
+	<div class="grid fade-in">
 		{#each items as item}
 			<DigimonCard {item} />
 		{/each}

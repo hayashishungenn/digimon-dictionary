@@ -300,3 +300,15 @@ test('narrow screen has no horizontal overflow', async ({ page }) => {
 	);
 	expect(detailOverflow).toBe(false);
 });
+
+test('works with prefers-reduced-motion', async ({ page }) => {
+	// animations are disabled but the page stays fully usable (UI-P1-4)
+	await page.emulateMedia({ reducedMotion: 'reduce' });
+	await page.goto('/');
+	await expect(page.locator('[data-testid="digimon-card"]').first()).toBeVisible();
+	await page.goto('/digimon/agumon');
+	await expect(page.locator('.detail-h1')).toBeVisible();
+	// graph mode still works with reduced motion
+	await page.getByRole('button', { name: '图谱模式' }).click();
+	await expect(page.locator('.evo-graph').first()).toBeVisible();
+});

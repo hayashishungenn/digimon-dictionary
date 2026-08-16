@@ -157,23 +157,27 @@
 			</div>
 		</div>
 	{:else}
-		{#if graph.edges.length > 0}
-			{@const specialTypes = [...new Set(graph.edges.map((e) => e.evolution_type).filter((t) => t !== 'normal'))]}
-			{#if specialTypes.length > 0}
-				<div class="evo-legend" role="note">
-					<span class="mono faint">进化类型</span>
-					{#each specialTypes as t}
-						<span class="legend-chip">{typeLabel(t)}</span>
-					{/each}
-				</div>
-			{/if}
-			{#if (graph.node_count ?? 0) > 300}
-				<div class="evo-hint" role="status">图谱较大（{graph.node_count} 节点 / {graph.edge_count} 边），可滚动、缩放查看。</div>
-			{/if}
-			<EvolutionSvg {graph} {centerId} />
-		{:else}
-			<div class="no-data">没有可展示的进化关系</div>
-		{/if}
+		{#key graph.depth}
+			<div class="fade-in">
+				{#if graph.edges.length > 0}
+					{@const specialTypes = [...new Set(graph.edges.map((e) => e.evolution_type).filter((t) => t !== 'normal'))]}
+					{#if specialTypes.length > 0}
+						<div class="evo-legend" role="note">
+							<span class="mono faint">进化类型</span>
+							{#each specialTypes as t}
+								<span class="legend-chip">{typeLabel(t)}</span>
+							{/each}
+						</div>
+					{/if}
+					{#if (graph.node_count ?? 0) > 300}
+						<div class="evo-hint" role="status">图谱较大（{graph.node_count} 节点 / {graph.edge_count} 边），可滚动、缩放查看。</div>
+					{/if}
+					<EvolutionSvg {graph} {centerId} />
+				{:else}
+					<div class="no-data">没有可展示的进化关系</div>
+				{/if}
+			</div>
+		{/key}
 	{/if}
 </div>
 
