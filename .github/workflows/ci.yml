@@ -39,6 +39,8 @@ jobs:
         run: uv run ruff check .
       - name: Test
         run: uv run pytest -q
+      - name: Python dependency audit
+        run: uvx pip-audit --skip-editable
 
   web:
     name: Web (check + test + build + hermetic E2E)
@@ -61,6 +63,9 @@ jobs:
       - name: Install web dependencies
         working-directory: apps/web
         run: npm ci
+      - name: Web dependency audit
+        working-directory: apps/web
+        run: npm audit --omit=dev --audit-level=high
       - name: Type-check
         working-directory: apps/web
         run: npm run check

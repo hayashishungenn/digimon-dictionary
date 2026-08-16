@@ -133,6 +133,15 @@ Windows 一条命令启动两个进程：`powershell -ExecutionPolicy Bypass -Fi
 备份 / 恢复 / 复核工作流见上方脚本表：`backup_local` / `restore_local` / `inspect_snapshot` /
 `review_queue`。
 
+## 本地自用与公网部署边界
+
+本仓库定位为**个人本地自用**（不依赖公网部署）。若绑定到局域网或公网，必须先处理以下事项：
+
+- **认证**：`POST /api/review/{id}/resolve` 等写接口**没有认证**——仅在 localhost 自用安全。
+  任何局域网/公网暴露前必须加认证、CSRF 防护，并收紧 CORS（默认仅 localhost）。
+- **反向代理 + HTTPS**：生产环境需配置反向代理与 HTTPS。
+- **备份策略**：同步/恢复均会原子替换数据库，公网场景需额外的定期备份与监控。
+
 ## 测试
 
 ```bash

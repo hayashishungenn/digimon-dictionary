@@ -12,17 +12,25 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
+import shutil
 import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 
-from pipeline.core.config import DB_PATH, IMAGES_DIR
+from pipeline.core.config import DB_PATH, IMAGES_DIR, REPORTS_DIR
 from pipeline.core.manifest import manifest_path_for, read_manifest
 
 
 def _run(cmd: list[str]) -> str:
+    exe = cmd[0]
+    # Windows: npm/node are .cmd shims that shutil.which('npm') may miss
+    # (P3-01); try the .cmd variant explicitly.
+    if os.name == "nt" and shutil.which(exe) is None and shutil.which(exe + ".cmd") is not None:
+        exe = exe + ".cmd"
+        cmd = [exe, *cmd[1:]]
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
         return (out.stdout or out.stderr).strip().splitlines()[0] if (out.stdout or out.stderr) else "?"
@@ -69,6 +77,25 @@ def _db_info(db: Path) -> dict:
     return info
 
 
+def _report_matches_db(db_path: Path, db: dict) -> bool | None:
+    """True when the quality report's db_sha256 matches the current database
+    (P2-01); None when there is no report to compare."""
+    report_path = REPORTS_DIR / "data-quality.json"
+    if not report_path.exists() or not db.get("exists"):
+        return None
+    try:
+        report_sha = json.loads(report_path.read_text("utf-8")).get("db_sha256")
+    except ValueError:
+        return False
+    import hashlib
+
+    try:
+        db_sha = hashlib.sha256(db_path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+    return report_sha == db_sha
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="DigiDex local health summary (read-only)")
     ap.add_argument("--json", action="store_true", help="emit JSON")
@@ -108,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
             "is_incremental_baseline": manifest.get("is_incremental_baseline"),
         },
         "image_cache_dir": str(IMAGES_DIR),
+        "quality_report_matches_db": _report_matches_db(db_path, db),
     }
 
     if args.json:
