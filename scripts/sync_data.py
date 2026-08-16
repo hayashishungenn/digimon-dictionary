@@ -576,16 +576,28 @@ def _write_validation_report(db_path: Path, reports_dir: Path | None, skip: bool
     return report
 
 
-def _publish_reports(staging: Path, reports_dir: Path, db_sha256: str | None) -> None:
+class ReportPublishError(Exception):
+    """Raised when the authoritative JSON quality report cannot be promoted
+    after the database was already published (P1-2). The DB is live; the staged
+    reports are retained so the new report is recoverable."""
+
+
+def _publish_reports(staging: Path, reports_dir: Path, db_sha256: str | None) -> bool:
     """Move the staged quality report into place only AFTER a successful publish
     (P2-01): on a failed validation/publish the staged report is never promoted,
     so data/reports/ always describes the live DB, never a rejected candidate.
 
     The staged report was generated from the CANDIDATE before its WAL checkpoint,
     so its db_sha256 is re-stamped with the authoritative post-publish DB sha.
+
+    Returns True when the report was fully promoted (staging removed); False when
+    the Markdown report could not be promoted (the JSON is authoritative, so the
+    caller continues; the staged MD is retained for the next real rebuild). Raises
+    ReportPublishError when the authoritative JSON could not be promoted — the
+    caller must abort and preserve the staging dir (P1-2).
     """
     if not staging.exists():
-        return
+        return True
     reports_dir.mkdir(parents=True, exist_ok=True)
     for name in ("data-quality.json", "data-quality.md"):
         staged = staging / name
@@ -598,8 +610,36 @@ def _publish_reports(staging: Path, reports_dir: Path, db_sha256: str | None) ->
             data["db_sha256"] = db_sha256
             staged.write_text(_json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
         target = reports_dir / name
-        os.replace(staged, target)
+        try:
+            os.replace(staged, target)
+        except OSError as exc:
+            if name.endswith(".json"):
+                raise ReportPublishError(
+                    f"authoritative report {name} could not be promoted: {exc} "
+                    f"(staged reports retained at {staging} for recovery)"
+                ) from exc
+            logger.warning(
+                "Markdown report could not be promoted (%s); staged copy retained "
+                "at %s for recovery — the JSON report is authoritative", exc, staged,
+            )
+            return False
     shutil.rmtree(staging, ignore_errors=True)
+    return True
+
+
+def _restamp_report_db_sha(report_path: Path, db_sha256: str | None) -> None:
+    """Re-stamp the promoted quality report's db_sha256 after the image stage
+    modified the live DB (P1-1), writing atomically so the file is never observed
+    half-written. No-op when the report or the new sha is unavailable."""
+    if not report_path.exists() or not db_sha256:
+        return
+    import json as _json
+
+    data = _json.loads(report_path.read_text("utf-8"))
+    data["db_sha256"] = db_sha256
+    tmp = report_path.with_name(report_path.name + ".tmp")
+    tmp.write_text(_json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
+    os.replace(tmp, report_path)
 
 
 def run(argv: list[str] | None = None, *, loader=None, reports_dir: Path | None = None) -> int:
@@ -789,6 +829,8 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
     conn: sqlite3.Connection | None = None
     fetcher: Fetcher | None = None
     keep_candidate = False
+    keep_staging = False  # retain .staging when report promotion failed (P1-2)
+    db_published = False  # becomes True once the live DB was atomically replaced
     try:
         conn = connect(candidate)
         create_schema(conn)
@@ -916,12 +958,28 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
             return 1
 
         _publish(candidate, db_path)
+        db_published = True
         db_sha = _sha256(db_path)
         # promote the staged quality report right after the DB replace — before
         # the manifest is written — so data/reports/ describes the live DB and
         # the manifest's report_sha256 matches the final promoted file (P2-01).
         # The report's db_sha256 is re-stamped with the post-publish DB sha.
-        _publish_reports(staging_reports, reports_dir, db_sha)
+        try:
+            report_promoted = _publish_reports(staging_reports, reports_dir, db_sha)
+        except ReportPublishError as exc:
+            keep_staging = True
+            logger.error(
+                "DATABASE PUBLISHED but the quality report could not be promoted: %s. "
+                "Staged report retained at %s; re-run sync_data.py (it reconciles "
+                "state from the database) or restore from a backup.",
+                exc, staging_reports,
+            )
+            return 1
+        if not report_promoted:
+            # JSON promoted but the Markdown report failed — the JSON is the
+            # authoritative report, so complete the sync; retain the staged MD for
+            # the next real rebuild (P1-2).
+            keep_staging = True
         report_path = reports_dir / "data-quality.json"
         report_sha = _sha256(report_path) if report_path.exists() else None
         manifest_path = manifest_path_for(db_path)
@@ -997,14 +1055,10 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
                 conn.close()
             logger.info("image stage: %d images, %d thumbnails derived, %d refused by policy",
                         done, derived, refused)
-            manifest["image_stage"] = "ok" if not (failed or thumb_failed) else "failed"
-            try:
-                write_manifest(manifest, manifest_path)
-            except OSError as exc:
-                logger.warning("could not record image stage in manifest: %s", exc)
             if failed or thumb_failed:
                 # audit trail distinguishes a published canonical DB from an
-                # incomplete image cache (S0-1).
+                # incomplete image cache (S0-1). Runs BEFORE the checkpoint below
+                # so the recomputed db_sha256 covers it too (P1-1).
                 try:
                     run_conn = connect(db_path)
                     try:
@@ -1017,6 +1071,33 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
                         run_conn.close()
                 except sqlite3.Error:
                     pass
+            # The image stage (and the audit note above) modified the live DB, so
+            # the post-publish db_sha256 / report_sha256 recorded at publish time
+            # are now stale (P1-1). Checkpoint the WAL so the file hash reflects
+            # the true DB, then recompute and re-stamp manifest + report.
+            chk = connect(db_path)
+            if not checkpoint_and_close(chk):
+                logger.warning(
+                    "image stage: WAL checkpoint failed; db_sha256 may describe "
+                    "the uncheckpointed file"
+                )
+            db_sha = _sha256(db_path)
+            try:
+                _restamp_report_db_sha(report_path, db_sha)
+            except OSError as exc:
+                logger.warning(
+                    "could not re-stamp report db_sha256 after image stage: %s", exc
+                )
+            new_report_sha = _sha256(report_path) if report_path.exists() else None
+            manifest["database_sha256"] = db_sha
+            if new_report_sha:
+                manifest["report_sha256"] = new_report_sha
+            manifest["image_stage"] = "ok" if not (failed or thumb_failed) else "failed"
+            try:
+                write_manifest(manifest, manifest_path)
+            except OSError as exc:
+                logger.warning("could not record image stage in manifest: %s", exc)
+            if failed or thumb_failed:
                 logger.error(
                     "image stage had %d download / %d thumbnail failures; DB published "
                     "but image cache incomplete — re-run scripts/download_images.py",
@@ -1025,10 +1106,26 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
                 return 1
         return 0
     except KeyboardInterrupt:
-        logger.error("interrupted; official database unchanged")
+        if db_published:
+            keep_staging = True
+            logger.error(
+                "interrupted AFTER the database was published; the DB at %s is the "
+                "new snapshot but reports/manifest/state may be incomplete — "
+                "re-run sync_data.py to reconcile", db_path,
+            )
+        else:
+            logger.error("interrupted; official database unchanged")
         return 130
     except Exception as exc:  # noqa: BLE001
-        logger.error("sync FAILED; official database unchanged: %r", exc)
+        if db_published:
+            keep_staging = True
+            logger.error(
+                "sync FAILED after the database was published (%r); the DB at %s "
+                "is the new snapshot but reports/manifest/state may be incomplete "
+                "— re-run sync_data.py to reconcile", exc, db_path,
+            )
+        else:
+            logger.error("sync FAILED; official database unchanged: %r", exc)
         return 1
     finally:
         if fetcher is not None:
@@ -1040,9 +1137,11 @@ def _run_locked(args, sources: list[str], db_path: Path, candidate: Path,
                 pass
         if not keep_candidate:
             cleanup_db_files(candidate)
-        # staged reports are either promoted (publish success) or must be
-        # discarded — never leave a stale .staging dir behind (P2-01).
-        shutil.rmtree(staging_reports, ignore_errors=True)
+        # staged reports are either promoted (publish success), intentionally
+        # discarded (pre-publish failure), or retained for recovery when a
+        # post-publish report promotion failed (P1-2).
+        if not keep_staging:
+            shutil.rmtree(staging_reports, ignore_errors=True)
 
 
 # console-script alias: `sync-data` (see pyproject.toml [project.scripts])

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 import sqlite3
 from pathlib import Path
 
@@ -648,3 +650,100 @@ def test_reconcile_does_not_mark_committed_when_state_save_fails(env_db, tmp_pat
     assert read_manifest(manifest_path_for(env_db))["state_committed"] is True
     state_data = json.loads((tmp_path / ".sync_state.json").read_text("utf-8"))
     assert state_data["sync_data"]["sources"] == ["dapi"]
+
+
+# ---------------------------------------------------------------------------
+# third-round review: P1-1 (--images leaves db_sha256 stale), P1-2 (report
+# promotion not atomic + misleading error), P2 (partial run is not a baseline)
+# ---------------------------------------------------------------------------
+def test_images_recompute_db_and_report_hashes(env_db, tmp_path, monkeypatch):
+    """P1-1: the image stage modifies the live DB AFTER publish, so the manifest
+    database_sha256 and the report db_sha256 must be recomputed to match the
+    actual post-image file — never left pointing at the pre-image DB."""
+    import scripts.download_images as dl
+
+    def fake_download_all(db_path):
+        # simulate a real download that writes rows into the live DB
+        conn = connect(db_path)
+        conn.execute(
+            "INSERT INTO digimon_image(digimon_id, image_type, download_status) "
+            "VALUES (1, 'main', 'downloaded')"
+        )
+        conn.commit()
+        conn.close()
+        return (1, 0, 0)
+
+    def fake_ensure_thumbnails(conn, force=False):
+        conn.execute("UPDATE digimon SET thumbnail='derived' WHERE id=1")
+        conn.commit()
+        return (1, 0)
+
+    monkeypatch.setattr(dl, "download_all", fake_download_all)
+    monkeypatch.setattr(dl, "ensure_thumbnails", fake_ensure_thumbnails)
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    rc = sync_data.run(["--sources", "dapi", "--images"], loader=loader,
+                       reports_dir=tmp_path / "reports")
+    assert rc == 0
+    manifest = read_manifest(manifest_path_for(env_db))
+    assert manifest["image_stage"] == "ok"
+    # manifest and report both describe the ACTUAL post-image DB file
+    assert manifest["database_sha256"] == db_hash(env_db)
+    report = json.loads((tmp_path / "reports" / "data-quality.json").read_text("utf-8"))
+    assert report["db_sha256"] == db_hash(env_db)
+
+
+def test_report_md_promotion_failure_is_nonfatal_and_preserved(env_db, tmp_path, monkeypatch, caplog):
+    """P1-2: when the Markdown report cannot be promoted after the DB is replaced,
+    the run still completes (the JSON is the authoritative report), manifest+state
+    are committed, and the staged MD is retained for the next real rebuild."""
+    md_target = tmp_path / "reports" / "data-quality.md"
+    real_replace = os.replace
+    fail_md = {"on": True}
+
+    def flaky_replace(src, dst):
+        if fail_md["on"] and os.path.normpath(str(dst)) == os.path.normpath(str(md_target)):
+            raise OSError("simulated lock on data-quality.md")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", flaky_replace)
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    with caplog.at_level(logging.WARNING):
+        rc = sync_data.run(["--sources", "dapi"], loader=loader,
+                           reports_dir=tmp_path / "reports")
+    assert rc == 0
+    assert digimon_count(env_db) == len(SUCCESS_RECORDS)
+    # manifest + state committed despite the cosmetic MD failure
+    manifest = read_manifest(manifest_path_for(env_db))
+    assert manifest["state_committed"] is True
+    assert manifest["report_sha256"] == hashlib.sha256(
+        (tmp_path / "reports" / "data-quality.json").read_bytes()
+    ).hexdigest()
+    # the staged (new) MD is retained for the next real rebuild
+    assert (tmp_path / "reports" / ".staging" / "data-quality.md").exists()
+    assert "Markdown report" in caplog.text
+
+
+def test_report_json_promotion_failure_is_honest(env_db, tmp_path, monkeypatch, caplog):
+    """P1-2: when the authoritative JSON report cannot be promoted after the DB is
+    replaced, the run fails with an HONEST error (never 'official database
+    unchanged'), keeps the staged report, and the next run can reconcile."""
+    json_target = tmp_path / "reports" / "data-quality.json"
+    real_replace = os.replace
+
+    def flaky_replace(src, dst):
+        if os.path.normpath(str(dst)) == os.path.normpath(str(json_target)):
+            raise OSError("simulated lock on data-quality.json")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", flaky_replace)
+    loader = make_loader({"dapi": (SUCCESS_RECORDS, None)})
+    with caplog.at_level(logging.ERROR):
+        rc = sync_data.run(["--sources", "dapi"], loader=loader,
+                           reports_dir=tmp_path / "reports")
+    assert rc != 0
+    # the DB WAS published — never claim otherwise
+    assert digimon_count(env_db) == len(SUCCESS_RECORDS)
+    assert "official database unchanged" not in caplog.text
+    assert "DATABASE PUBLISHED" in caplog.text
+    # staged JSON retained for recovery
+    assert (tmp_path / "reports" / ".staging" / "data-quality.json").exists()
