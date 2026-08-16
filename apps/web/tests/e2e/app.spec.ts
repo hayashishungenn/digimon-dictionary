@@ -229,6 +229,20 @@ test('mobile filter drawer opens and applies filters', async ({ page }) => {
 	await expect(page.locator('[data-testid="digimon-card"]').first()).toBeVisible();
 });
 
+test('filter drawer is keyboard accessible (focus trap, Escape close)', async ({ page }) => {
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto('/');
+	await page.getByRole('button', { name: '打开筛选面板' }).click();
+	const drawer = page.getByRole('dialog', { name: '筛选' });
+	await expect(drawer).toBeVisible();
+	// focus moves into the drawer
+	await expect(drawer.locator('select').first()).toBeFocused();
+	// Escape closes it and restores focus to the trigger
+	await page.keyboard.press('Escape');
+	await expect(drawer).toHaveCount(0);
+	await expect(page.getByRole('button', { name: '打开筛选面板' })).toBeFocused();
+});
+
 test('filters are saved in the URL and restored on reload', async ({ page }) => {
 	// deep link with filters applied
 	await page.goto('/?level=ultimate&attribute=vaccine');

@@ -70,18 +70,33 @@
 		panX = 0;
 		panY = 0;
 	}
+
+	// Keyboard panning (UI-P1-2): the graph is focusable and arrow keys move the
+	// view — keyboard users aren't stuck with a mouse-only wheel/pan.
+	function onKeydown(e: KeyboardEvent) {
+		const step = 40;
+		if (e.key === 'ArrowLeft') { panX += step; e.preventDefault(); }
+		else if (e.key === 'ArrowRight') { panX -= step; e.preventDefault(); }
+		else if (e.key === 'ArrowUp') { panY += step; e.preventDefault(); }
+		else if (e.key === 'ArrowDown') { panY -= step; e.preventDefault(); }
+	}
 </script>
 
+<!-- The whole graph is single-focusable pan/zoom surface (role="application" +
+     tabindex=0); the warnings are inherent to an applet-style control. -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div
 	class="evo-graph"
 	class:dragging
+	tabindex="0"
+	role="application"
+	aria-label="进化图谱（滚轮缩放，拖拽平移；聚焦后用方向键平移）"
 	onwheel={onWheel}
 	onpointerdown={onPointerDown}
 	onpointermove={onPointerMove}
 	onpointerup={onPointerUp}
 	onpointerleave={onPointerUp}
-	role="img"
-	aria-label="进化图谱（滚轮缩放，拖拽平移）"
+	onkeydown={onKeydown}
 >
 	<svg
 		width={width}
@@ -152,6 +167,10 @@
 	}
 	.evo-graph.dragging {
 		cursor: grabbing;
+	}
+	.evo-graph:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
 	}
 	.zoom-controls {
 		position: absolute;

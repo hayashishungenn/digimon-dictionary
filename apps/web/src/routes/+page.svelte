@@ -233,6 +233,54 @@
 		}
 		ready = true;
 	});
+
+	// ----- accessibility: filter drawer focus management (UI-P1-2) -----
+	// Close on Escape, trap focus inside the dialog, and restore focus to the
+	// trigger button on close so keyboard users don't lose their place.
+	function closeFilters() {
+		showFilters = false;
+	}
+
+	function onDrawerKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			closeFilters();
+			return;
+		}
+		if (e.key !== 'Tab') return;
+		// focus trap: wrap Tab / Shift+Tab within the drawer
+		const drawer = e.currentTarget as HTMLElement;
+		const focusables = drawer.querySelectorAll<HTMLElement>(
+			'button, [href], select, input, textarea, [tabindex]:not([tabindex="-1"])'
+		);
+		if (focusables.length === 0) return;
+		const first = focusables[0];
+		const last = focusables[focusables.length - 1];
+		const active = document.activeElement;
+		if (e.shiftKey && active === first) {
+			e.preventDefault();
+			last.focus();
+		} else if (!e.shiftKey && active === last) {
+			e.preventDefault();
+			first.focus();
+		}
+	}
+
+	$effect(() => {
+		if (showFilters) {
+			// focus the first filter control inside the freshly-mounted drawer;
+			// run on the next tick so the drawer's DOM is fully mounted
+			const tick = requestAnimationFrame(() => {
+				const first = document.querySelector('.filter-drawer select') as HTMLElement | null;
+				first?.focus();
+			});
+			return () => cancelAnimationFrame(tick);
+		} else {
+			// restore focus to the trigger on close
+			const trigger = document.querySelector('.btn-filter-mobile') as HTMLElement | null;
+			trigger?.focus();
+		}
+	});
 </script>
 
 <svelte:head>
@@ -325,11 +373,11 @@
 {/if}
 
 {#if showFilters}
-	<div class="drawer-overlay" onclick={() => (showFilters = false)} aria-hidden="true"></div>
-	<div class="filter-drawer" role="dialog" aria-modal="true" aria-label="筛选">
+	<div class="drawer-overlay" onclick={closeFilters} aria-hidden="true"></div>
+	<div class="filter-drawer" role="dialog" aria-modal="true" aria-label="筛选" tabindex="-1" onkeydown={onDrawerKeydown}>
 		<div class="drawer-head">
 			<span class="mono">筛选 FILTERS</span>
-			<button class="btn" onclick={() => (showFilters = false)}>完成</button>
+			<button class="btn" onclick={closeFilters}>完成</button>
 		</div>
 		<div class="drawer-body">
 			<FilterControls bind:attribute bind:typeName bind:field bind:group bind:xAb bind:sort />
