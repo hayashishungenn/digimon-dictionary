@@ -61,7 +61,7 @@
 | 命令 | 退出码 | 结果 |
 |---|---|---|
 | `uv run ruff check .` | 0 | All checks passed |
-| `uv run pytest` | 0 | **245 passed**（含真实 DB smoke） |
+| `uv run pytest` | 0 | **262 passed**（含真实 DB smoke + 安全审查回归） |
 | `uv run python scripts/validate_data.py` | 0 | 0 errors / 2 warnings / 4 info |
 | `uv run python scripts/verify_samples.py --n 50 --seed 20260815` | 0 | 随机 50/50 + 固定 16/16，无硬失败 |
 | `cd apps/web && npm run check` | 0 | 370 files, 0 errors, 0 warnings |
@@ -75,20 +75,43 @@
 
 ## 四、代码审查结论（已修复）
 
-对本阶段全部新增代码做了专项审查，修复 7 处真实缺陷：
+### 第一轮（任务书完成时，7 处缺陷）
 
-1. **reconcile/diagnose 读取错误的 sync_run**（`ORDER BY rowid DESC` 取到最旧 run，历史保留会打乱 rowid）→
-   改为 `ORDER BY run_id DESC`；否则状态丢失后每次都会重新发布。
-2. **restore_backup 默认写到全局 data/**（恢复非默认目标时清掉了真实 `.sync_state.json`/reports）→
-   运行时文件默认跟随目标目录；并修复了被测试误写的真实状态文件（经 reconcile 恢复为 5 源真实哈希）。
-3. **备份记录的 schema 取 stale manifest**（v7 manifest + v8 DB 时备份记录 v7）→ 改取副本真实
-   `PRAGMA user_version`。
+1. **reconcile/diagnose 读取错误的 sync_run**（`ORDER BY rowid DESC` 取到最旧 run，历史保留会打乱 rowid）→ 改为 `ORDER BY run_id DESC`；否则状态丢失后每次都会重新发布。
+2. **restore_backup 默认写到全局 data/**（恢复非默认目标时清掉了真实 `.sync_state.json`/reports）→ 运行时文件默认跟随目标目录；并修复了被测试误写的真实状态文件（经 reconcile 恢复为 5 源真实哈希）。
+3. **备份记录的 schema 取 stale manifest**（v7 manifest + v8 DB 时备份记录 v7）→ 改取副本真实 `PRAGMA user_version`。
 4. **`_preserve_review_history` 丢失 note/run_id**（跨重建解决说明丢失，违反 S1-1）→ 列感知携带。
 5. **favorites 清空不持久**（直接置空 reactive 数组未 save，刷新后恢复）→ 增加 `clearFavorites()`。
 6. **meta 重试失效**（`ensureMeta` 一次性守卫）→ `ensureMeta(true)` 强制重取。
-7. **首页空态与错误态叠加显示**（报错时误显"没有找到"）→ 错误时不再渲染空态。
+7. **首页空态与错误态叠加显示**（报错时误显"没有找到"）→ 错误时不渲染空态。
 
-每项均有回归测试。真实 DB 因审查修复产生的状态文件损坏已用 S0-1 的 reconcile 机制安全修复并复验。
+### 第二轮（安全审查 P1/P2/P3，全部修复）
+
+**P1 高优先级**
+- **P1-01 写锁协调**：API `/api/review/{id}/resolve` 与 CLI resolve 与同步管线共用 `db_lock_path` 锁；同步进行中返回 409 / 非零，不再与原子发布竞态（并发测试覆盖）。
+- **P1-02 源完整性门禁**：每个适配器上报 expected/parsed/raw_completeness；分页到上限、页面缺失、首次同步全空均禁止发布（live DB 不变）。
+- **P1-03 迁移安全**：迁移前自动备份带数据旧库（`<db>.pre-migrate-v<ver>.sqlite`）；v2 别名去重合并 source/verified、冲突先确定性去重再建唯一索引（不中止）；逐版本 0..7 迁移数据保留测试。
+- **P1-04 恢复标记**：reconcile 仅在 `state.save()` 真正成功后才把 manifest 标记 committed。
+- **P1-05 恢复可回滚**：恢复提交全量回滚（DB+state+manifest+reports 同一快照）+ 同步锁。
+
+**P2 中优先级**
+- **P2-01 报告描述 live DB**：报告先写 `.staging`，仅发布成功后提升并重打 `db_sha256`；失败候选的报告永不覆盖真实报告；`diagnose` 校验报告是否匹配当前 DB（真实 DB 验证 True）。
+- **P2-02 错误类型 state 文件**：`[]`/`null` 等合法但错误形状视为损坏，自动重建（不崩溃）。
+- **P2-03 审查分页**：category 用 SQL CASE，list/count 用 LIMIT/OFFSET + COUNT(*)；导出超过 1 万条返回 413 / 非零，不再静默截断。
+- **P2-04 by-id Unicode 数字**：仅接受 ASCII 十进制，`²` 等被忽略，不再 500。
+- **P2-05 搜索 N+1**：详情批量 `WHERE id IN`（单次），搜索窗口扩大不再逐条查询。
+- **P2-06 图片恢复**：`--with-images` 备份恢复时还原 `images/` 缓存（staging + 回滚）。
+- **P2-07 前端过期响应**：详情进化展开/收藏页/组织页加入请求序号 + 安全错误文案。
+- **P2-08 WAL checkpoint busy**：校验 `wal_checkpoint` 返回值，busy≠0 视为失败不发布。
+
+**P3 Info**
+- **P3-01** diagnose 在 Windows 用 `.cmd` 解析 npm/node。
+- **P3-02/03** `apps/web/README.md` 重写（本地启动 / VITE_API_BASE / realdb E2E / adapter 说明）。
+- **P3-04** README 记录公网部署边界（写接口无认证；局域网/公网需认证/CSRF/CORS/HTTPS）。
+- **P3-05** CI 增加 `pip-audit` + `npm audit --omit=dev`。
+
+> 每项均有回归测试。第一轮 7 处 + 第二轮 5 P1 + 8 P2 + 5 P3 全部修复并复验（`pytest 262 passed`、前端 `check/test/build/E2E(24)/realdb(20)` 全绿）。
+
 
 ## 五、诚实声明 / 已知限制
 
@@ -98,7 +121,7 @@
 - **profile_zh_cn / 中文技能名为 0**：无可靠来源。
 - **`game_skill` 为空**：无许可明确的游戏技能来源（S2-2 已调研记录）。
 - **775 条人工复核**：全部可经 `/api/review` 或 `review_queue` 筛选/查看/处理/导出。
-- **未 push**：44 个原子 commit 均在本地 `main`（`origin/main` 之后）。
+- **提交**：两本任务书基线 44 个 commit 已按用户要求推送 GitHub；第二轮安全审查新增 8 个原子 commit（`origin/main` 之后，未 push）。
 - **公网部署未做**：本阶段明确不做；`dev.ps1` 与本机命令足以启动。
 
 ## 六、运行方式
