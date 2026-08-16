@@ -257,3 +257,16 @@ def test_inspect_snapshot_live_and_backup(live_db, tmp_path):
     backup = _backup(live_db, tmp_path)
     binfo = inspect_backup(backup)
     assert binfo["database_sha256"] == db_hash(backup / CORE_FILES["database"])
+
+
+def test_backup_schema_reflects_db_not_stale_manifest(live_db, tmp_path):
+    """The backup records the COPY's real schema even when the publish manifest
+    is stale (e.g. the DB was migrated in place after the manifest was written)."""
+    meta_path = tmp_path / ".publish_manifest.json"
+    m = json.loads(meta_path.read_text("utf-8"))
+    m["schema_version"] = 1  # deliberately stale
+    meta_path.write_text(json.dumps(m), "utf-8")
+
+    out = _backup(live_db, tmp_path)
+    meta = json.loads((out / "backup.json").read_text("utf-8"))
+    assert meta["schema_version"] == SCHEMA_VERSION  # the DB's real version

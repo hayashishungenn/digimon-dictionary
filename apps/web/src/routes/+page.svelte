@@ -395,7 +395,7 @@
 
 {#if loading && items.length === 0}
 	<SkeletonGrid count={12} />
-{:else if items.length === 0}
+{:else if items.length === 0 && !error}
 	<EmptyState
 		title="没有找到匹配的数码兽"
 		message="换个搜索词或减少筛选条件试试。"

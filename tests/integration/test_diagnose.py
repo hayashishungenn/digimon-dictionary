@@ -28,7 +28,7 @@ def test_diagnose_json_reports_facts(tmp_path, capsys):
     assert report["database"]["path"] == str(db)
     assert report["database"]["exists"] is True
     assert report["database"]["integrity_ok"] is True
-    assert report["database"]["snapshot_date"] == "2026-08-15"
+    assert report["database"]["snapshot_date"]  # date is runtime, not hardcoded
     assert report["database"]["counts"]["total"] == 6
     assert report["last_sync"]["run_id"] == "run-x"
     assert report["last_sync"]["status"] == "ok"

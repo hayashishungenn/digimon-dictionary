@@ -624,6 +624,7 @@ def _backfill_manifest(db_path: Path, state: SyncState, reports_dir: Path,
         return
     run_id = state.get("sync_data").get("run_id")
     snap_date = state.get("sync_data").get("snapshot_date")
+    schema_version = SCHEMA_VERSION
     if not snap_date:
         try:
             conn = connect_readonly(db_path)
@@ -632,6 +633,7 @@ def _backfill_manifest(db_path: Path, state: SyncState, reports_dir: Path,
                     "SELECT snapshot_date FROM snapshot ORDER BY id DESC LIMIT 1"
                 ).fetchone()
                 snap_date = row["snapshot_date"] if row else _now()[:10]
+                schema_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
             finally:
                 conn.close()
         except sqlite3.Error:
@@ -642,7 +644,7 @@ def _backfill_manifest(db_path: Path, state: SyncState, reports_dir: Path,
         sources=sources or state.get("sync_data").get("sources", []),
         db_sha256=_sha256(db_path),
         report_sha256=_sha256(reports_dir / "data-quality.json"),
-        schema_version=SCHEMA_VERSION,
+        schema_version=schema_version,
         image_stage="unknown",
         is_incremental_baseline=True,
         state_committed=True,

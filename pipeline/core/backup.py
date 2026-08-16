@@ -159,6 +159,10 @@ def create_backup(
 
     manifest = read_manifest(manifest_path) or {}
     db_sha = _sha256(db_copy)
+    # the backup's schema is the COPY'S actual schema (authoritative); the
+    # publish manifest may be stale if the DB was migrated in place after the
+    # manifest was written (e.g. v7 manifest, v8 DB).
+    db_schema = _read_user_version(db_copy)
     backup_meta = {
         "backup_id": out_dir.name,
         "created_at": _now_ts(),
@@ -167,7 +171,7 @@ def create_backup(
         "sources": manifest.get("sources"),
         "database_sha256": db_sha,
         "database_size": db_copy.stat().st_size,
-        "schema_version": manifest.get("schema_version") or _read_user_version(db_copy),
+        "schema_version": db_schema or manifest.get("schema_version"),
         "includes_images": includes_images,
         "image_stage": manifest.get("image_stage"),
         "files": {
