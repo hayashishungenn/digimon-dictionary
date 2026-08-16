@@ -124,10 +124,17 @@ def test_backup_roundtrip_to_fresh_target(tmp_path, live_db):
 
 
 def test_restored_db_serves_api(live_db, tmp_path):
-    """The restored DB satisfies the same API checks as the live one."""
+    """The restored DB satisfies the same API checks as the live one, and the
+    runtime records (state/manifest/reports) land BESIDE the target — never the
+    global data/ dir (review finding: default paths must not clobber the live
+    dataset's runtime files)."""
     backup = _backup(live_db, tmp_path)
     restored = tmp_path / "api" / "digidex.sqlite"
     restore_backup(backup, db_path=restored)
+    # runtime records were restored next to the target, not into data/
+    assert (tmp_path / "api" / ".sync_state.json").exists()
+    assert (tmp_path / "api" / ".publish_manifest.json").exists()
+    assert (tmp_path / "api" / "reports" / "data-quality.json").exists()
 
     os.environ["DIGIDEX_DB"] = str(restored)
     try:

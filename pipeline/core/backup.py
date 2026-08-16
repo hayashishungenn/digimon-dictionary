@@ -256,7 +256,7 @@ def restore_backup(
     backup_dir: Path,
     *,
     db_path: Path,
-    state_path: Path = SYNC_STATE_PATH,
+    state_path: Path | None = None,
     manifest_path: Path | None = None,
     reports_dir: Path | None = None,
     dry_run: bool = False,
@@ -267,11 +267,17 @@ def restore_backup(
     file (DB temp re-verified), then atomically replace each target. A failure
     in the staging phase leaves the live DB untouched. Returns the restored
     paths (for dry_run, the paths that *would* be restored).
-    """
-    from .config import REPORTS_DIR
 
-    reports_dir = reports_dir or REPORTS_DIR
+    Runtime records (sync state / manifest / reports) default to the TARGET's
+    directory — never the global data/ dir — so restoring to a non-default
+    path cannot clobber the live dataset's runtime files (review finding).
+    """
+    from .config import REPORTS_DIR  # noqa: F401  (used only via default)
+
+    # defaults follow the target's directory, not the global data/ paths
+    state_path = state_path or db_path.parent / ".sync_state.json"
     manifest_path = manifest_path or manifest_path_for(db_path)
+    reports_dir = reports_dir or db_path.parent / "reports"
     info = validate_backup(backup_dir)
 
     targets = {
