@@ -7,6 +7,7 @@
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import SkeletonGrid from '$lib/components/SkeletonGrid.svelte';
 	import { ensureMeta, metaState } from '$lib/stores/meta.svelte';
+	import { recordQuery } from '$lib/stores/personal.svelte';
 
 	import { onMount } from 'svelte';
 
@@ -130,6 +131,7 @@
 		searchMode = true;
 		loading = true;
 		error = null;
+		recordQuery(term); // personal query history (S2-1)
 		try {
 			const res = await api.search(term, 60);
 			if (my !== reqSeq) return; // stale search — drop it

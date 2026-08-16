@@ -5,10 +5,12 @@
 	import ErrorState from '$lib/components/ErrorState.svelte';
 	import SkeletonGrid from '$lib/components/SkeletonGrid.svelte';
 	import { favorites } from '$lib/stores/favorites.svelte';
+	import { clearHistory, clearPersonal, personal, personalCount } from '$lib/stores/personal.svelte';
 
 	let items = $state<DigimonListItem[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let confirmClear = $state(false);
 
 	// Fetch the favorited ids as list items; ids only exist locally (localStorage),
 	// so fetch order is the saved order. Bounded by the API (500).
@@ -29,6 +31,17 @@
 		void favorites.ids;
 		load();
 	});
+
+	// Personal data lives only in localStorage; export is a local JSON download.
+	function exportPersonal() {
+		const blob = new Blob([JSON.stringify(personal, null, 2)], { type: 'application/json' });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = 'digidex-personal.json';
+		a.click();
+		URL.revokeObjectURL(url);
+	}
 </script>
 
 <svelte:head>
@@ -40,7 +53,7 @@
 	<span class="cur mono">收藏</span>
 </div>
 <h1 class="page-title">收藏 Favorites</h1>
-<p class="dim">个人收藏保存在本机浏览器（localStorage），不改变 canonical 数据，也不依赖登录或公网。</p>
+<p class="dim">个人收藏、备注、标签与查询历史保存在本机浏览器（localStorage），不改变 canonical 数据，也不依赖登录或公网。</p>
 
 {#if error}
 	<ErrorState message={error} retry={load} />
@@ -58,7 +71,12 @@
 	{#if items.length > 0}
 		<div class="grid">
 			{#each items as item}
-				<DigimonCard {item} />
+				<div class="fav-card">
+					<DigimonCard {item} />
+					{#if personalCount(item.id) > 0}
+						<span class="personal-hint mono" title="该收藏有个人备注/标签">{personalCount(item.id)} 条个人记录</span>
+					{/if}
+				</div>
 			{/each}
 		</div>
 	{/if}
@@ -68,3 +86,91 @@
 		</p>
 	{/if}
 {/if}
+
+<div class="personal-panel">
+	<h2 class="pp-title">个人数据管理（仅本机）</h2>
+	<div class="pp-row">
+		<div>
+			<span class="faint mono" style="font-size:11px">最近查询</span>
+			{#if personal.history.length > 0}
+				<div class="history-list">
+					{#each personal.history as h}<span class="history-chip mono">{h}</span>{/each}
+				</div>
+			{:else}
+				<p class="faint" style="font-size:12px">暂无查询历史。</p>
+			{/if}
+		</div>
+	</div>
+	<div class="pp-actions">
+		<button class="btn" onclick={clearHistory}>清除查询历史</button>
+		<button class="btn" onclick={exportPersonal}>导出个人数据（JSON）</button>
+		{#if confirmClear}
+			<span class="confirm-inline">
+				<span class="faint">确认清空全部收藏/备注/标签/历史？</span>
+				<button class="btn btn-danger" onclick={() => { clearPersonal(); favorites.ids.length = 0; confirmClear = false; }}>确认清空</button>
+				<button class="btn" onclick={() => (confirmClear = false)}>取消</button>
+			</span>
+		{:else}
+			<button class="btn" onclick={() => (confirmClear = true)}>清除全部个人数据</button>
+		{/if}
+	</div>
+</div>
+
+
+<style>
+	.fav-card {
+		position: relative;
+	}
+	.personal-hint {
+		display: block;
+		margin-top: 4px;
+		font-size: 10px;
+		color: var(--text-faint);
+	}
+	.personal-panel {
+		margin-top: 28px;
+		border: 1px dashed var(--border-strong);
+		border-radius: var(--radius);
+		padding: 14px 16px;
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+	.pp-title {
+		margin: 0;
+		font-size: 14px;
+		font-weight: 700;
+		color: var(--text-dim);
+	}
+	.history-list {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		margin-top: 6px;
+	}
+	.history-chip {
+		font-size: 11px;
+		color: var(--text-dim);
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		padding: 2px 9px;
+	}
+	.pp-actions {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px;
+	}
+	.btn-danger {
+		border-color: rgba(255, 93, 115, 0.5);
+		color: var(--danger);
+	}
+	.btn-danger:hover {
+		background: rgba(255, 93, 115, 0.12);
+	}
+	.confirm-inline {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+	}
+</style>

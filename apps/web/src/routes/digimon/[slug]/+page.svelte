@@ -8,6 +8,7 @@
 	import ErrorState from '$lib/components/ErrorState.svelte';
 	import SkeletonGrid from '$lib/components/SkeletonGrid.svelte';
 	import { isFavorite, toggleFavorite } from '$lib/stores/favorites.svelte';
+	import { addTag, getNote, getTags, removeTag, setNote } from '$lib/stores/personal.svelte';
 
 	let { params } = $props();
 	let slug = $derived(params.slug);
@@ -117,6 +118,23 @@
 		if (!p?.source) return { kind: 'missing', label: '缺失' };
 		return { kind: 'sourced', label: '有来源' };
 	}
+
+	// personal research note + tags (S2-1 / UI-P2-1) — never canonical
+	let noteText = $state('');
+	let newTag = $state('');
+	$effect(() => {
+		if (data) {
+			noteText = getNote(data.id);
+			newTag = '';
+		}
+	});
+	function saveNote() {
+		if (data) setNote(data.id, noteText);
+	}
+	function commitTag() {
+		if (data && addTag(data.id, newTag)) newTag = '';
+	}
+	let myTags = $derived(data ? getTags(data.id) : []);
 </script>
 
 <svelte:head>
@@ -400,6 +418,41 @@
 		</div>
 	{/if}
 
+	<SectionHeader title="个人研究备注 Personal" code="MINE" aside="仅存本机，不影响官方数据" />
+	<div class="personal-box">
+		<textarea
+			class="input note-input"
+			rows="3"
+			placeholder="记录你自己的研究备注（不会写入来源表或官方简介）…"
+			bind:value={noteText}
+			onblur={saveNote}
+			aria-label="个人研究备注"
+		></textarea>
+		<div class="tag-row">
+			<input
+				class="input tag-input"
+				placeholder="添加个人标签，回车确认"
+				bind:value={newTag}
+				onkeydown={(e) => {
+					if (e.key === 'Enter') {
+						e.preventDefault();
+						commitTag();
+					}
+				}}
+				aria-label="添加个人标签"
+			/>
+			{#if myTags.length > 0}
+				<div class="personal-tags">
+					{#each myTags as t}
+						<button class="ptag" onclick={() => data && removeTag(data.id, t)} title={`移除标签 ${t}`}>
+							{t} <span class="ptag-x" aria-hidden="true">×</span>
+						</button>
+					{/each}
+				</div>
+			{/if}
+		</div>
+	</div>
+
 	{#if data.source.length > 0}
 		<SectionHeader title="数据来源 Source" code="SRC" aside={`${data.source.length} 行`} />
 		<details>
@@ -518,6 +571,54 @@
 		font-family: var(--mono);
 		font-size: 11px;
 		overflow-wrap: anywhere;
+	}
+	.personal-box {
+		background: rgba(53, 208, 255, 0.04);
+		border: 1px dashed var(--border-strong);
+		border-radius: var(--radius);
+		padding: 12px 14px;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+	.note-input {
+		width: 100%;
+		resize: vertical;
+		min-height: 60px;
+		line-height: 1.5;
+	}
+	.tag-row {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.tag-input {
+		max-width: 320px;
+	}
+	.personal-tags {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+	.ptag {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 12px;
+		color: var(--accent);
+		border: 1px solid rgba(53, 208, 255, 0.35);
+		background: rgba(53, 208, 255, 0.08);
+		border-radius: 999px;
+		padding: 2px 9px;
+	}
+	.ptag:hover {
+		border-color: var(--warning);
+		color: var(--warning);
+	}
+	.ptag-x {
+		font-family: var(--mono);
+		font-size: 12px;
+		line-height: 1;
 	}
 	.evo-row-wrap {
 		display: flex;

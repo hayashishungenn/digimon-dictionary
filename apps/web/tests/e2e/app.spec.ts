@@ -104,6 +104,40 @@ test('favorites page lists saved favorites and clears', async ({ page }) => {
 	await expect(page.getByText('还没有收藏任何数码兽')).toBeVisible();
 });
 
+test('personal notes and tags persist locally and never touch canonical data', async ({ page }) => {
+	await page.goto('/digimon/agumon');
+	await page.getByLabel('个人研究备注').fill('我的研究备注：2006 动画版相关');
+	await page.getByLabel('个人研究备注').blur();
+	await page.getByLabel('添加个人标签').fill('主线');
+	await page.getByLabel('添加个人标签').press('Enter');
+	await expect(page.locator('.ptag')).toContainText('主线');
+	// canonical data is unaffected by the personal note/tag
+	await expect(page.locator('.detail-h1')).toContainText('亚古兽');
+	// reload restores the local personal data
+	await page.reload();
+	await expect(page.getByLabel('个人研究备注')).toHaveValue('我的研究备注：2006 动画版相关');
+	await expect(page.locator('.ptag')).toContainText('主线');
+});
+
+test('favorites page shows personal data and clearing it requires confirmation', async ({ page }) => {
+	await page.goto('/digimon/agumon');
+	await page.locator('.detail-art .fav').click();
+	await page.getByLabel('添加个人标签').fill('收藏1');
+	await page.getByLabel('添加个人标签').press('Enter');
+	await page.goto('/favorites');
+	// the saved card shows a personal-record hint
+	await expect(page.locator('.personal-hint').first()).toBeVisible();
+	// clearing requires an explicit confirmation
+	await page.getByRole('button', { name: '清除全部个人数据' }).click();
+	await expect(page.getByRole('button', { name: '确认清空' })).toBeVisible();
+	await page.getByRole('button', { name: '取消', exact: true }).click();
+	await expect(page.locator('.personal-hint').first()).toBeVisible();
+	// confirm clears it
+	await page.getByRole('button', { name: '清除全部个人数据' }).click();
+	await page.getByRole('button', { name: '确认清空' }).click();
+	await expect(page.locator('.personal-hint')).toHaveCount(0);
+});
+
 test('missing image shows placeholder, not broken image', async ({ page }) => {
 	// agumon-ds is a digimons_net-only entity with no image in this dataset.
 	await page.goto('/digimon/agumon-ds');
