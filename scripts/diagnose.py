@@ -24,6 +24,25 @@ from pipeline.core.config import DB_PATH, IMAGES_DIR, REPORTS_DIR
 from pipeline.core.manifest import manifest_path_for, read_manifest
 
 
+def _is_bad_stored_path(value: str) -> bool:
+    """P0-1 contract check (local copy; P0-1 moves it to pipeline.core.images):
+    a stored image path must be cache-root-relative or NULL — never a drive
+    letter, UNC, OS-absolute, '..' traversal, or a 'data/images/' prefix."""
+    if not value:
+        return False
+    if value.startswith(("\\\\", "//")):
+        return True
+    if len(value) > 1 and value[1] == ":":
+        return True
+    if value.startswith("/"):
+        return True
+    if ".." in value.replace("\\", "/").split("/"):
+        return True
+    if value.replace("\\", "/").startswith("data/images/"):
+        return True
+    return False
+
+
 def _run(cmd: list[str]) -> str:
     exe = cmd[0]
     # Always pass the fully-resolved path: on Windows `shutil.which('npm')`
@@ -69,6 +88,29 @@ def _db_info(db: Path) -> dict:
             "SELECT COUNT(*) FROM digimon WHERE main_image IS NULL OR TRIM(main_image)=''"
         ).fetchone()[0]
         info["digimon_without_main_image"] = img_missing
+        # P0-1 image path contract: local_path / thumbnails must be cache-root
+        # RELATIVE (or NULL). Count violations so the baseline can prove the
+        # migration converged.
+        abs_paths = 0
+        total_paths = 0
+        for (local_path,) in conn.execute(
+            "SELECT local_path FROM digimon_image WHERE local_path IS NOT NULL"
+        ).fetchall():
+            total_paths += 1
+            if _is_bad_stored_path(local_path):
+                abs_paths += 1
+        thumb_rows = conn.execute(
+            "SELECT COUNT(*) FROM digimon_image WHERE image_type='thumbnail'"
+        ).fetchone()[0]
+        digi_thumbs = conn.execute(
+            "SELECT COUNT(*) FROM digimon WHERE thumbnail IS NOT NULL AND TRIM(thumbnail) != ''"
+        ).fetchone()[0]
+        info["image_path_contract"] = {
+            "absolute_local_paths": abs_paths,
+            "relative_local_paths": total_paths - abs_paths,
+            "thumbnails_in_db": thumb_rows,
+            "digimon_with_thumbnail": digi_thumbs,
+        }
         run = conn.execute(
             "SELECT run_id, status, sources, snapshot_date, started_at, finished_at "
             "FROM sync_run ORDER BY run_id DESC LIMIT 1"
@@ -129,6 +171,7 @@ def main(argv: list[str] | None = None) -> int:
             "counts": db.get("counts"),
             "images_by_status": db.get("images_by_status"),
             "digimon_without_main_image": db.get("digimon_without_main_image"),
+            "image_path_contract": db.get("image_path_contract"),
         },
         "last_sync": db.get("last_sync"),
         "publish_manifest": {
@@ -161,6 +204,11 @@ def main(argv: list[str] | None = None) -> int:
     if d.get("images_by_status"):
         print(f"  images: {json.dumps(d['images_by_status'], ensure_ascii=False)}  "
               f"without_main_image={d['digimon_without_main_image']}")
+    pc = d.get("image_path_contract")
+    if pc is not None:
+        print(f"  image paths: abs={pc['absolute_local_paths']} rel={pc['relative_local_paths']} "
+              f"(contract: relative or NULL)  thumbnails_in_db={pc['thumbnails_in_db']} "
+              f"digimon_with_thumbnail={pc['digimon_with_thumbnail']}")
     ls = report["last_sync"]
     if ls:
         print(f"last sync: run {ls['run_id']} status={ls['status']} sources={ls['sources']} "

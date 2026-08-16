@@ -37,6 +37,43 @@ def test_diagnose_json_reports_facts(tmp_path, capsys):
     assert report["last_sync"]["status"] == "ok"
 
 
+def test_diagnose_image_path_contract(tmp_path, capsys):
+    """P0-0/P0-1: diagnose counts absolute vs relative local_path, thumbnail
+    rows in the DB, and populated digimon.thumbnail — proving whether the image
+    path contract (relative-or-NULL) holds."""
+    from tests.conftest import build_fixture_db
+
+    db = tmp_path / "digidex.sqlite"
+    conn = build_fixture_db(db)
+    did = conn.execute("SELECT id FROM digimon WHERE canonical_slug='agumon'").fetchone()[0]
+    conn.execute(
+        """INSERT INTO digimon_image(digimon_id, image_type, remote_url, local_path, download_status)
+           VALUES(?, 'main_image', 'https://x/1.png', ?, 'downloaded')""",
+        [did, r"C:\Users\old\Github\Digimon_Dictionary\data\images\digi_00001_Agumon.png"],
+    )
+    conn.execute(
+        """INSERT INTO digimon_image(digimon_id, image_type, remote_url, local_path, download_status)
+           VALUES(?, 'main_image', 'https://x/2.png', ?, 'downloaded')""",
+        [did, "digi_00002_f1e2a3.png"],
+    )
+    conn.execute(
+        """INSERT INTO digimon_image(digimon_id, image_type, local_path, download_status)
+           VALUES(?, 'thumbnail', ?, 'downloaded')""",
+        [did, "thumbs/digi_00001.png"],
+    )
+    conn.execute("UPDATE digimon SET thumbnail=? WHERE id=?", ["thumbs/digi_00001.png", did])
+    conn.commit()
+    conn.close()
+
+    rc = diagnose.main(["--json", "--db", str(db)])
+    assert rc == 0
+    contract = json.loads(capsys.readouterr().out)["database"]["image_path_contract"]
+    assert contract["absolute_local_paths"] == 1
+    assert contract["relative_local_paths"] == 2
+    assert contract["thumbnails_in_db"] == 1
+    assert contract["digimon_with_thumbnail"] == 1
+
+
 def test_diagnose_missing_db_is_graceful(tmp_path, capsys):
     rc = diagnose.main(["--json", "--db", str(tmp_path / "absent.sqlite")])
     assert rc == 0
