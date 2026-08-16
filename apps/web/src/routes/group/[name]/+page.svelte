@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { api } from '$lib/api/client';
+	import { api, userMessage } from '$lib/api/client';
 	import type { GroupResponse } from '$lib/api/types';
 	import DigimonCard from '$lib/components/DigimonCard.svelte';
 	import ErrorState from '$lib/components/ErrorState.svelte';
@@ -15,7 +15,7 @@
 	let reqSeq = 0;
 
 	// reload whenever the group name changes (SvelteKit reuses the component);
-	// a stale response must never overwrite a newer one (T6.1)
+	// a stale response must never overwrite a newer one (T6.1 / P2-07)
 	$effect(() => {
 		load(name);
 	});
@@ -30,7 +30,7 @@
 			data = res;
 		} catch (e) {
 			if (my !== reqSeq) return;
-			error = e instanceof Error ? e.message : '加载失败';
+			error = userMessage(e, '加载失败');
 		} finally {
 			if (my === reqSeq) loading = false;
 		}

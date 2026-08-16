@@ -44,21 +44,28 @@
 		}
 	}
 
+	// P2-07: evolution expansion is keyed to the CURRENT route — if the user
+	// navigates to another digimon mid-request, the stale response must not
+	// overwrite the new page.
 	async function expandEvo() {
 		const cur = data;
 		if (!cur || evoLoading || evoDepth >= MAX_EVO_DEPTH) return;
+		const my = ++reqSeq;
 		evoLoading = true;
 		evoError = null;
+		const mySlug = slug;
 		const next = evoDepth + 1;
 		try {
-			const g = await api.evolution(slug, next);
+			const g = await api.evolution(mySlug, next);
+			if (my !== reqSeq || mySlug !== slug) return; // stale -> drop
 			evoDepth = next;
 			data = { ...cur, evolution: g };
 		} catch (e) {
+			if (my !== reqSeq || mySlug !== slug) return;
 			// keep current depth on failure, surface the error so the user can retry
-			evoError = e instanceof Error ? e.message : '进化图加载失败';
+			evoError = userMessage(e, '进化图加载失败');
 		} finally {
-			evoLoading = false;
+			if (my === reqSeq) evoLoading = false;
 		}
 	}
 
@@ -66,16 +73,20 @@
 	async function setDepth(next: number) {
 		const cur = data;
 		if (!cur || evoLoading || next < 1 || next >= evoDepth) return;
+		const my = ++reqSeq;
 		evoLoading = true;
 		evoError = null;
+		const mySlug = slug;
 		try {
-			const g = await api.evolution(slug, next);
+			const g = await api.evolution(mySlug, next);
+			if (my !== reqSeq || mySlug !== slug) return; // stale -> drop
 			evoDepth = next;
 			data = { ...cur, evolution: g };
 		} catch (e) {
-			evoError = e instanceof Error ? e.message : '进化图加载失败';
+			if (my !== reqSeq || mySlug !== slug) return;
+			evoError = userMessage(e, '进化图加载失败');
 		} finally {
-			evoLoading = false;
+			if (my === reqSeq) evoLoading = false;
 		}
 	}
 

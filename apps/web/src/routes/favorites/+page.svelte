@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { api } from '$lib/api/client';
+	import { api, userMessage } from '$lib/api/client';
 	import type { DigimonListItem } from '$lib/api/types';
 	import DigimonCard from '$lib/components/DigimonCard.svelte';
 	import ErrorState from '$lib/components/ErrorState.svelte';
@@ -11,19 +11,23 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let confirmClear = $state(false);
+	let reqSeq = 0; // P2-07: only the newest load may update state
 
 	// Fetch the favorited ids as list items; ids only exist locally (localStorage),
 	// so fetch order is the saved order. Bounded by the API (500).
 	async function load() {
+		const my = ++reqSeq;
 		loading = true;
 		error = null;
 		try {
 			const res = await api.byIds(favorites.ids);
+			if (my !== reqSeq) return; // stale -> drop
 			items = res.items;
 		} catch (e) {
-			error = e instanceof Error ? e.message : '加载失败';
+			if (my !== reqSeq) return;
+			error = userMessage(e, '加载失败');
 		} finally {
-			loading = false;
+			if (my === reqSeq) loading = false;
 		}
 	}
 
