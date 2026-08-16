@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+
+import pytest
 
 import scripts.diagnose as diagnose
 
@@ -66,3 +69,13 @@ def test_diagnose_never_leaks_environment(tmp_path, capsys):
     for part in os.environ["PATH"].split(os.pathsep):
         if part and len(part) > 3:
             assert part not in out, f"PATH segment leaked: {part}"
+
+
+def test_diagnose_resolves_npm_when_installed():
+    """P3: on Windows npm is a .cmd shim — _run must resolve the executable via
+    shutil.which's full path and never report '(not found)' when npm exists."""
+    if shutil.which("npm") is None and shutil.which("npm.cmd") is None:
+        pytest.skip("npm not installed on this machine")
+    version = diagnose._run(["npm", "--version"])
+    assert version != "(not found)"
+    assert version and version[0].isdigit()

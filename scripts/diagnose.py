@@ -26,11 +26,15 @@ from pipeline.core.manifest import manifest_path_for, read_manifest
 
 def _run(cmd: list[str]) -> str:
     exe = cmd[0]
-    # Windows: npm/node are .cmd shims that shutil.which('npm') may miss
-    # (P3-01); try the .cmd variant explicitly.
-    if os.name == "nt" and shutil.which(exe) is None and shutil.which(exe + ".cmd") is not None:
-        exe = exe + ".cmd"
-        cmd = [exe, *cmd[1:]]
+    # Always pass the fully-resolved path: on Windows `shutil.which('npm')`
+    # honors PATHEXT and returns `...\npm.CMD`, but CreateProcess cannot resolve
+    # the extensionless name, so subprocess would raise FileNotFoundError even
+    # though npm is installed (P3). `.cmd` shims resolve fine by full path.
+    resolved = shutil.which(exe)
+    if resolved is None and os.name == "nt":
+        resolved = shutil.which(exe + ".cmd")
+    if resolved:
+        cmd = [resolved, *cmd[1:]]
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
         return (out.stdout or out.stderr).strip().splitlines()[0] if (out.stdout or out.stderr) else "?"
