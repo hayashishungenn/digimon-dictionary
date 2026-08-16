@@ -219,6 +219,33 @@ def test_cli_bad_resolve_returns_nonzero(review_db, monkeypatch):
     assert rq.main(["resolve", "999999", "--status", "resolved", "--note", "x"]) == 1
 
 
+def test_review_history_preserves_note_across_rebuild(tmp_path):
+    """A resolved item's explanation note must survive a candidate rebuild
+    (S1-1: '状态变更可重复读取且不丢失')."""
+    import scripts.sync_data as sd
+    from pipeline.core.schema import create_schema
+
+    live = tmp_path / "live.sqlite"
+    conn = build_fixture_db(live)
+    conn.execute(
+        """INSERT INTO manual_review_queue(entity_type, reason, status, note, resolved_at, run_id)
+           VALUES('digimon','ambiguous name','wontfix','won''t chase — dub-only','2026-08-15T00:00:00+00:00','run-a')"""
+    )
+    conn.commit()
+    conn.close()
+
+    candidate = tmp_path / "candidate.sqlite"
+    cconn = connect(candidate)
+    create_schema(cconn)
+    sd._preserve_review_history(live, cconn)
+    row = cconn.execute("SELECT status, note, run_id FROM manual_review_queue").fetchone()
+    cconn.close()
+    assert row is not None
+    assert row["status"] == "wontfix"
+    assert row["note"] == "won't chase — dub-only"
+    assert row["run_id"] == "run-a"
+
+
 # ---------------------------------------------------------------------------
 # migration: v7 -> v8 keeps rows and adds note/run_id
 # ---------------------------------------------------------------------------

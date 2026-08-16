@@ -438,6 +438,8 @@ def _preserve_review_history(db_path: Path, conn: sqlite3.Connection) -> None:
     The candidate rebuilds the queue from current data, but human decisions
     (resolved/wontfix) must persist across syncs (they are not regenerated).
     Open items are always regenerated, so only resolved/wontfix are copied.
+    Also carries the reviewer's `note` + `run_id` so a resolution explanation
+    is never lost on a rebuild (S1-1); column-aware for pre-v8 DBs.
     """
     if not db_path.exists():
         return
@@ -446,18 +448,23 @@ def _preserve_review_history(db_path: Path, conn: sqlite3.Connection) -> None:
     except sqlite3.Error:
         return
     try:
+        old_cols = {r[1] for r in old.execute("PRAGMA table_info(manual_review_queue)")}
+        cols = ["entity_type", "entity_id", "reason", "detail", "status", "resolved_at"]
+        if "note" in old_cols:
+            cols.append("note")
+        if "run_id" in old_cols:
+            cols.append("run_id")
+        sel = ", ".join(cols)
         rows = old.execute(
-            """SELECT entity_type, entity_id, reason, detail, status, resolved_at
-               FROM manual_review_queue
-               WHERE status IN ('resolved','wontfix')"""
+            f"""SELECT {sel} FROM manual_review_queue
+                WHERE status IN ('resolved','wontfix')"""
         ).fetchall()
         copied = 0
         for r in rows:
             cur = conn.execute(
-                """INSERT OR IGNORE INTO manual_review_queue
-                   (entity_type, entity_id, reason, detail, status, resolved_at)
-                   VALUES(?,?,?,?,?,?)""",
-                [r["entity_type"], r["entity_id"], r["reason"], r["detail"], r["status"], r["resolved_at"]],
+                f"""INSERT OR IGNORE INTO manual_review_queue({sel})
+                    VALUES({','.join('?' * len(cols))})""",
+                [r[c] for c in cols],
             )
             copied += cur.rowcount
         if copied:
