@@ -153,9 +153,20 @@ def test_migration_upgrades_old_db_without_data_loss(tmp_path):
         """
     )
     conn.execute("INSERT INTO digimon(id, canonical_slug, name_en, level, level_raw, is_official_reference) VALUES(1,'agumon','Agumon','child','Child',1)")
-    conn.execute("INSERT INTO digimon_alias(id, digimon_id, alias, language, alias_type) VALUES(1,1,'Agu','en','official'),(2,1,'Agu','en','dub'),(3,1,'亚古兽','zh_cn','official')")
+    conn.execute(
+        """INSERT INTO digimon_alias(id, digimon_id, alias, language, alias_type, source, verified)
+           VALUES(1,1,'Agu','en','official','dapi',0),
+                 (2,1,'Agu','en','dub','wikimon',1),
+                 (3,1,'亚古兽','zh_cn','official','official',0)"""
+    )
     conn.execute("INSERT INTO snapshot(id, snapshot_date) VALUES(1, '2026-01-01 00:00:00')")  # legacy placeholder
-    conn.execute("INSERT INTO data_conflict(entity_type, entity_id, field, source_a, value_a, source_b, value_b) VALUES('digimon',1,'level','dapi','child','official','adult')")
+    # two conflicts for the SAME entity/field — the v2 unique index must not
+    # abort the migration (P1-03)
+    conn.execute(
+        """INSERT INTO data_conflict(entity_type, entity_id, field, source_a, value_a, source_b, value_b)
+           VALUES('digimon',1,'level','dapi','child','official','adult'),
+                 ('digimon',1,'level','dapi','child','wikimon','unknown')"""
+    )
     conn.commit()
     conn.close()
 
@@ -165,12 +176,18 @@ def test_migration_upgrades_old_db_without_data_loss(tmp_path):
     assert conn.execute("PRAGMA user_version").fetchone()[0] == schema.SCHEMA_VERSION
     # no data lost
     assert conn.execute("SELECT name_en FROM digimon WHERE id=1").fetchone()[0] == "Agumon"
-    # duplicate aliases deduped (Agu en kept once), zh alias intact
+    # duplicate aliases deduped (Agu en kept once) AND their provenance merged:
+    # the kept row carries both sources and the max verified flag (P1-03)
     assert conn.execute("SELECT COUNT(*) FROM digimon_alias WHERE digimon_id=1 AND language='en'").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM digimon_alias WHERE digimon_id=1 AND language='zh_cn'").fetchone()[0] == 1
+    kept = conn.execute(
+        "SELECT source, alias_type, verified FROM digimon_alias WHERE digimon_id=1 AND language='en'"
+    ).fetchone()
+    assert "dapi" in kept["source"] and "wikimon" in kept["source"]
+    assert kept["verified"] == 1
     # placeholder snapshot row removed, real rows kept
     assert conn.execute("SELECT COUNT(*) FROM snapshot").fetchone()[0] == 0
-    # data_conflict row preserved + new columns populated (nullable for legacy rows)
+    # duplicate conflicts deduped to one (the newest) + new columns populated
     assert conn.execute("SELECT COUNT(*) FROM data_conflict WHERE field='level'").fetchone()[0] == 1
     cols = {r[1] for r in conn.execute("PRAGMA table_info(data_conflict)")}
     assert "candidates" in cols and "review_status" in cols
@@ -178,6 +195,98 @@ def test_migration_upgrades_old_db_without_data_loss(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_alias_unique'").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_conflict_entity_field'").fetchone()[0] == 1
     conn.close()
+
+
+def test_migration_backs_up_populated_db(tmp_path):
+    """P1-03: migrating a POPULATED legacy DB copies the file aside first; a
+    fresh (empty) DB does not get a backup sidecar."""
+    from pipeline.core.schema import create_schema
+
+    # populated legacy DB (v0, full enough old schema, has a digimon row)
+    db = tmp_path / "populated.sqlite"
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """CREATE TABLE digimon (
+            id INTEGER PRIMARY KEY, canonical_slug TEXT NOT NULL UNIQUE,
+            name_zh_cn TEXT, name_zh_cn_source TEXT, name_zh_cn_status TEXT,
+            name_zh_cn_verified INTEGER DEFAULT 0, name_zh_hk TEXT, name_zh_tw TEXT,
+            name_en TEXT, name_en_dub TEXT, name_ja TEXT, name_romanized TEXT,
+            level TEXT, level_raw TEXT, level_2 TEXT, attribute TEXT, attribute_raw TEXT,
+            x_antibody INTEGER DEFAULT 0, is_official_reference INTEGER DEFAULT 0,
+            is_extended INTEGER DEFAULT 1, first_appearance_title TEXT,
+            first_appearance_date TEXT, first_appearance_medium TEXT,
+            main_image TEXT, thumbnail TEXT, profile_zh_cn TEXT, profile_en TEXT,
+            profile_ja TEXT, profile_source TEXT, profile_source_url TEXT,
+            profile_verified INTEGER DEFAULT 0, name_origin TEXT, dapi_id INTEGER,
+            wikimon_title TEXT, official_slug TEXT, digimons_net_slug TEXT,
+            digidb_id INTEGER, content_hash TEXT, source_last_updated TEXT,
+            created_at TEXT, updated_at TEXT
+        );
+        CREATE TABLE digimon_alias (
+            id INTEGER PRIMARY KEY, digimon_id INTEGER, alias TEXT, language TEXT,
+            region TEXT, alias_type TEXT, source TEXT, verified INTEGER DEFAULT 0
+        );"""
+    )
+    conn.execute("INSERT INTO digimon(id, canonical_slug, name_en) VALUES(1,'agumon','Agumon')")
+    conn.commit()
+    conn.close()
+
+    conn = schema.connect(db)
+    create_schema(conn)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == schema.SCHEMA_VERSION
+    conn.close()
+    backup = tmp_path / "populated.sqlite.pre-migrate-v0.sqlite"
+    assert backup.exists(), "migrating a populated DB must leave a pre-migration copy"
+
+    # a fresh (empty) DB must NOT leave a sidecar
+    empty = tmp_path / "empty.sqlite"
+    conn = schema.connect(empty)
+    create_schema(conn)
+    conn.close()
+    assert not (tmp_path / "empty.sqlite.pre-migrate-v0.sqlite").exists()
+    assert not (tmp_path / "empty.sqlite.pre-migrate-v8.sqlite").exists()
+
+
+def test_every_migration_version_preserves_data(tmp_path):
+    """P1-03: opening a populated DB at EACH historical schema version (0..7)
+    and running create_schema must migrate to the current version WITHOUT
+    losing any existing rows — every migration is additive/idempotent."""
+    from pipeline.core.schema import create_schema
+
+    for start_ver in range(0, schema.SCHEMA_VERSION):
+        db = tmp_path / f"v{start_ver}.sqlite"
+        conn = schema.connect(db)
+        create_schema(conn)  # current-schema base
+        conn.execute(
+            "INSERT INTO digimon(canonical_slug, name_en, name_ja, name_zh_cn) "
+            "VALUES('agumon','Agumon','アグモン','亚古兽')"
+        )
+        conn.execute("INSERT INTO digimon_alias(digimon_id, alias, language, alias_type) VALUES(1,'Agu','en','official')")
+        conn.execute(
+            "INSERT INTO data_conflict(entity_type, entity_id, field, source_a, value_a, source_b, value_b) "
+            "VALUES('digimon',1,'level','a','x','b','y')"
+        )
+        conn.execute(
+            "INSERT INTO snapshot(snapshot_date, official_count, extended_count, total_count) "
+            "VALUES('2026-01-01',1,0,1)"
+        )
+        conn.execute("INSERT INTO manual_review_queue(entity_type, reason) VALUES('digimon','needs review')")
+        conn.execute(f"PRAGMA user_version = {start_ver}")
+        conn.commit()
+        counts_before = {
+            t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            for t in ("digimon", "digimon_alias", "data_conflict", "snapshot", "manual_review_queue")
+        }
+        conn.close()
+
+        conn = schema.connect(db)
+        create_schema(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == schema.SCHEMA_VERSION
+        for table, n in counts_before.items():
+            after = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            assert after == n, f"{table} lost rows migrating v{start_ver}->{schema.SCHEMA_VERSION}"
+        conn.close()
 
 
 def test_verify_integrity(tmp_path):

@@ -10,6 +10,7 @@ Design decisions (per product spec docs/product-spec.md):
 """
 from __future__ import annotations
 
+import shutil
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
@@ -49,6 +50,14 @@ def _migrate_v2(conn: sqlite3.Connection) -> None:
     the chosen value/source, all candidates as JSON, and a review status.
     Also dedups `digimon_alias` and adds unique indexes so re-running merge
     cannot insert duplicate aliases/conflicts.
+
+    Migration must not destroy history (P1-03):
+    - duplicate aliases are deduped but their source/alias_type/verified info is
+      MERGED into the kept (lowest-id) row before the unique index, so no
+      provenance is lost;
+    - duplicate conflicts are deduped deterministically (keep the newest row)
+      BEFORE creating the unique index, so a legacy DB with duplicate conflicts
+      upgrades instead of raising IntegrityError.
     """
     cols = {r[1] for r in conn.execute("PRAGMA table_info(data_conflict)")}
     for col, ddl in (
@@ -62,16 +71,46 @@ def _migrate_v2(conn: sqlite3.Connection) -> None:
     ):
         if col not in cols:
             conn.execute(ddl)
-    # dedup aliases (keep the lowest id) before enforcing uniqueness
-    conn.execute(
-        """DELETE FROM digimon_alias WHERE id NOT IN (
-             SELECT MIN(id) FROM digimon_alias
-             GROUP BY digimon_id, alias, language
-           )"""
-    )
+    # dedup aliases, preserving provenance: merge duplicate rows'
+    # source/alias_type/verified into the kept (lowest-id) row.
+    alias_rows = conn.execute(
+        """SELECT id, digimon_id, alias, language, source, alias_type, verified
+           FROM digimon_alias ORDER BY id"""
+    ).fetchall()
+    keep: dict[tuple, dict] = {}
+    drop_ids: list[int] = []
+    for r in alias_rows:
+        key = (r["digimon_id"], r["alias"], r["language"])
+        if key not in keep:
+            keep[key] = dict(r)
+        else:
+            k = keep[key]
+            sources = [s for s in (k["source"], r["source"]) if s]
+            k["source"] = ",".join(dict.fromkeys(sources)) or None
+            if not k["alias_type"] and r["alias_type"]:
+                k["alias_type"] = r["alias_type"]
+            k["verified"] = max(k["verified"] or 0, r["verified"] or 0)
+            drop_ids.append(r["id"])
+    for k in keep.values():
+        conn.execute(
+            "UPDATE digimon_alias SET source=?, alias_type=?, verified=? WHERE id=?",
+            [k["source"], k["alias_type"], k["verified"], k["id"]],
+        )
+    if drop_ids:
+        conn.execute(
+            f"DELETE FROM digimon_alias WHERE id IN ({','.join('?' * len(drop_ids))})",
+            drop_ids,
+        )
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_alias_unique "
         "ON digimon_alias(digimon_id, alias, language)"
+    )
+    # dedup conflicts deterministically (keep the newest row) BEFORE the unique
+    # index so duplicate conflicts don't abort the migration.
+    conn.execute(
+        """DELETE FROM data_conflict WHERE id NOT IN (
+             SELECT MAX(id) FROM data_conflict GROUP BY entity_type, entity_id, field
+           )"""
     )
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_conflict_entity_field "
@@ -605,17 +644,53 @@ SCHEMA_DDL: list[str] = [
 ]
 
 
-def create_schema(conn: sqlite3.Connection) -> None:
+def create_schema(conn: sqlite3.Connection, *, backup_on_migration: bool = True) -> None:
     """Create the base tables (if missing) and apply any pending migrations.
 
     Migrations run from the DB's current `PRAGMA user_version` up to
     SCHEMA_VERSION. Existing databases are upgraded in place without data loss;
     a fresh database runs every migration (each is a no-op on a new schema).
+
+    When a POPULATED database has pending migrations, a copy of the file is
+    taken aside first (``<db>.pre-migrate-v<oldver>.sqlite``) so a botched
+    upgrade never destroys the old data (P1-03). ``backup_on_migration=False``
+    is for paths that intentionally skip this (tests that construct old DBs).
     """
     for ddl in SCHEMA_DDL:
         conn.executescript(ddl)
+    ver = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if backup_on_migration and ver < SCHEMA_VERSION and _db_has_data(conn):
+        _backup_pre_migration(conn)
     _apply_migrations(conn)
     conn.commit()
+
+
+def _db_has_data(conn: sqlite3.Connection) -> bool:
+    try:
+        return int(conn.execute("SELECT COUNT(*) FROM digimon").fetchone()[0]) > 0
+    except sqlite3.Error:
+        return False
+
+
+def _backup_pre_migration(conn: sqlite3.Connection) -> None:
+    """Copy the DB file aside before an in-place migration (P1-03).
+
+    Only meaningful for a populated legacy DB; a fresh candidate has nothing to
+    lose, and repeated opens with the same starting version never duplicate the
+    sidecar.
+    """
+    row = conn.execute("PRAGMA database_list").fetchone()
+    path = Path(row[2]) if row else None
+    if not path or not path.exists():
+        return
+    ver = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    backup = path.with_name(f"{path.name}.pre-migrate-v{ver}.sqlite")
+    if backup.exists():
+        return
+    try:
+        shutil.copy2(path, backup)
+    except OSError:
+        pass
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
