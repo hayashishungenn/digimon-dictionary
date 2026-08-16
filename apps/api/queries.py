@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 from typing import Any
 
@@ -191,7 +192,10 @@ def list_by_ids(conn: sqlite3.Connection, ids: list[int]) -> list[dict[str, Any]
 # detail
 # --------------------------------------------------------------------------
 def get_digimon(conn: sqlite3.Connection, ident: str | int) -> dict[str, Any] | None:
-    if isinstance(ident, int) or ident.isdigit():
+    # ASCII-only decimal ids: str.isdigit() accepts ²/³/٤ etc. which int() then
+    # rejects with a 500 — treat any non-ASCII-decimal ident as a slug lookup
+    # (same rule as /api/digimon/by-id, P2-04).
+    if isinstance(ident, int) or re.fullmatch(r"[0-9]+", ident):
         row = conn.execute(
             f"SELECT {LIST_COLUMNS} FROM digimon d WHERE d.id = ?", [int(ident)]
         ).fetchone()

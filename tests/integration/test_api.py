@@ -101,6 +101,21 @@ def test_detail_404(client):
     assert client.get("/api/digimon/does-not-exist").status_code == 404
 
 
+def test_unicode_digit_ident_is_404_not_500(client):
+    """str.isdigit() accepts Unicode digits (², ³, ¹, ٤) that int() then rejects
+    with a 500 — every {ident} route must treat them as an unknown slug (404),
+    never crash (the P2-04 ASCII-decimal rule applied to get_digimon)."""
+    for p in ["²", "³", "¹", "٤"]:
+        assert client.get(f"/api/digimon/{p}").status_code == 404
+        assert client.get(f"/api/digimon/{p}/evolution").status_code == 404
+        assert client.get(f"/api/digimon/{p}/skills").status_code == 404
+        assert client.get(f"/api/digimon/{p}/aliases").status_code == 404
+        assert client.get(f"/api/digimon/{p}/relations").status_code == 404
+        assert client.get(f"/api/images/{p}/main_image").status_code == 404
+    # plain ASCII decimal ids still resolve to a real digimon
+    assert client.get("/api/digimon/1").status_code == 200
+
+
 def test_by_ids_returns_requested_order(client, fixture_db):
     """The favorites endpoint returns list items in the requested id order,
     drops ids that don't exist, and is never shadowed by /digimon/{ident}."""
@@ -427,6 +442,58 @@ def test_evolution_truncates_at_budget(client):
 
 def test_evolution_unknown_slug_404(client):
     assert client.get("/api/digimon/does-not-exist/evolution", params={"depth": 1}).status_code == 404
+
+
+def test_evolution_node_budget_holds_at_boundary(monkeypatch):
+    """Regression for a reported boundary overflow ("can exceed 500 nodes").
+
+    The cap is provably safe: the edge query is anchored on the current frontier
+    (``from IN(frontier) OR to IN(frontier)``) and every frontier node is already
+    in ``visited``, so a processed edge adds at most ONE new node — the
+    ``len(node_ids) >= budget`` guard therefore cannot overshoot. An adversarial
+    breadth-heavy tree still stops exactly at the budget.
+    """
+    import sqlite3
+
+    import apps.api.queries as q
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE digimon (id INTEGER PRIMARY KEY, canonical_slug TEXT NOT NULL UNIQUE, "
+        "name_zh_cn TEXT, name_en TEXT, name_ja TEXT, level TEXT, main_image TEXT)"
+    )
+    N = 200
+    conn.executemany(
+        "INSERT INTO digimon (id, canonical_slug, name_en) VALUES (?,?,?)",
+        [(i, f"d{i}", f"D{i}") for i in range(N)],
+    )
+    conn.execute(
+        "CREATE TABLE evolution_edge (id INTEGER PRIMARY KEY, from_digimon_id INTEGER NOT NULL, "
+        "to_digimon_id INTEGER NOT NULL, evolution_type TEXT NOT NULL DEFAULT 'normal', "
+        "condition TEXT, source TEXT, confidence TEXT DEFAULT 'high', is_primary_line INTEGER DEFAULT 0)"
+    )
+    # 4-ary tree: every frontier node fans out to 4 fresh children, so depth=3
+    # already exceeds even a 50-node budget — the harshest shape for the cap.
+    edges = []
+    for i in range(N):
+        for c in (4 * i + 1, 4 * i + 2, 4 * i + 3, 4 * i + 4):
+            if c < N:
+                edges.append((len(edges), i, c))
+    conn.executemany(
+        "INSERT INTO evolution_edge (id, from_digimon_id, to_digimon_id, evolution_type, "
+        "condition, source, confidence, is_primary_line) VALUES (?,?,?,?,?,?,?,?)",
+        [(i, f, t, "normal", None, "test", "high", 0) for i, f, t in edges],
+    )
+    conn.commit()
+
+    for budget in (3, 7, 50):
+        monkeypatch.setattr(q, "EVOLUTION_NODE_BUDGET", budget)
+        monkeypatch.setattr(q, "EVOLUTION_EDGE_BUDGET", 100_000)
+        g = q.get_evolution(conn, 0, depth=10)  # depth clamped to 3 internally
+        assert g["node_count"] <= budget
+        assert g["truncated"] is True  # the tree always exceeds a small budget
+    conn.close()
 
 
 def test_list_bounds(client):

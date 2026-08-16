@@ -373,6 +373,34 @@ def test_reconcile_picks_newest_run_after_multiple_runs(env_db, tmp_path):
     assert data["sync_data"]["sources"] == ["dapi"]
 
 
+def test_reconcile_refuses_partial_run_after_state_loss(env_db, tmp_path):
+    """P2: a partial (source-subset) publish must never seed incremental state
+    after state loss — reconcile_from_db refuses it (is_incremental_baseline is
+    false), so the next run does a full rebuild instead of trusting partial hashes."""
+    import json as _json
+
+    from pipeline.core.manifest import manifest_path_for, read_manifest
+    from pipeline.core.sync_state import SyncState
+
+    state_path = tmp_path / ".sync_state.json"
+    state_path.write_text(
+        _json.dumps({"sync_data": {"sources": ["dapi", "official", "digimons_net"]}}), "utf-8"
+    )
+    loader = make_loader({"dapi": (RECORDS, None)})
+    assert sync_data.run(["--sources", "dapi", "--partial-ok", "--publish-partial"],
+                         loader=loader, reports_dir=tmp_path / "reports") == 0
+    manifest = read_manifest(manifest_path_for(env_db))
+    assert manifest is not None
+    assert manifest["state_committed"] is True
+    assert manifest["is_incremental_baseline"] is False
+    assert manifest["notes"] == "partial"
+
+    # lose the state file, then reconcile must refuse the partial run
+    state_path.unlink()
+    st = SyncState(state_path)
+    assert st.reconcile_from_db(env_db) is False
+
+
 def test_noop_backfills_manifest_for_pre_manifest_db(env_db, tmp_path):
     """A DB current before the manifest system gets a publish manifest on the
     next no-op run — backup/restore rely on the manifest existing (S0-1)."""

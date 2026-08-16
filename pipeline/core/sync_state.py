@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import SYNC_STATE_PATH
+from .manifest import manifest_path_for, read_manifest
 
 
 class SyncState:
@@ -80,10 +81,20 @@ class SyncState:
             try:
                 run = conn.execute(
                     """SELECT run_id, sources FROM sync_run
-                       WHERE status IN ('ok','partial')
+                       WHERE status = 'ok'
                        ORDER BY run_id DESC LIMIT 1"""
                 ).fetchone()
                 if run is None:
+                    return False
+                # A completed publish that is explicitly NOT an incremental
+                # baseline (e.g. a partial source-subset publish) must never seed
+                # incremental markers after state loss — that would let a later
+                # sync take the no-op path against a knowingly-incomplete
+                # snapshot (P2). state_committed=True is required so the
+                # unfinished "published but state not committed" draft manifest
+                # (state_committed=False) is still reconcilable — that split is
+                # exactly what this recovery exists for (S0-1).
+                if self._is_completed_non_baseline(db_path, run["run_id"]):
                     return False
                 rows = conn.execute(
                     """SELECT source, content_hash, payload_hash, records,
@@ -112,3 +123,24 @@ class SyncState:
                 records=r["records"],
             )
         return True
+
+    def _is_completed_non_baseline(self, db_path: str | Path, run_id: str) -> bool:
+        """True when the publish manifest beside the DB records a COMPLETED
+        publish of this exact run that is explicitly not an incremental baseline.
+
+        Defense-in-depth for :meth:`reconcile_from_db`: the manifest's
+        ``is_incremental_baseline`` is the authoritative discriminator for
+        "this snapshot is deliberately incomplete" (a partial source-subset
+        publish sets it to False at ``sync_data.py``); a run recorded as
+        ``status='partial'`` is already excluded by the SQL, so this guards
+        against any mislabeled completed run. ``state_committed=True`` keeps the
+        unfinished publish window (draft manifest, state_committed=False)
+        reconcilable — that split is the reason reconcile exists (S0-1).
+        """
+        manifest = read_manifest(manifest_path_for(db_path))
+        return bool(
+            manifest
+            and manifest.get("run_id") == run_id
+            and manifest.get("state_committed") is True
+            and manifest.get("is_incremental_baseline") is False
+        )
