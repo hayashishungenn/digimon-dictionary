@@ -8,7 +8,7 @@ DigiDex 图鉴的前端。数据来自本地 FastAPI 后端（`apps/api`），�
 
 ```bash
 # 1. 先启动后端（提供 /api/* 与图片缓存服务）
-uv run uvicorn apps.api.main:app --reload        # http://localhost:8000/docs
+uv run python -m uvicorn apps.api.main:app --reload        # http://localhost:8000/docs
 
 # 2. 前端开发服务器
 npm install

@@ -341,7 +341,7 @@ README 能指导完成：
 uv run python scripts/validate_data.py
 uv run python scripts/verify_samples.py --n 50 --seed 20260815
 uv run python scripts/sync_data.py --sources dapi,official,digimons_net,wikimon,digidb --from-raw
-uv run uvicorn apps.api.main:app --reload
+uv run python -m uvicorn apps.api.main:app --reload
 cd apps/web && npm run dev
 ~~~
 

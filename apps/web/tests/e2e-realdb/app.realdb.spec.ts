@@ -87,6 +87,25 @@ test('Agumon detail: real trilingual names, skills, first appearance, source, im
 	await expect(page.locator('.source-table .prov-status').first()).toBeVisible();
 	// image status is expressed, not hidden
 	await expect(page.locator('.img-status').first()).toBeVisible();
+	// the real cached main art actually loads (local file, naturalWidth > 0)
+	const art = page.locator('.detail-art img').first();
+	await expect(art).toBeVisible();
+	await page.waitForFunction(() => {
+		const el = document.querySelector('.detail-art img') as HTMLImageElement | null;
+		return el !== null && el.complete && el.naturalWidth > 0;
+	});
+});
+
+test('real local image API returns 200 image/* for main and thumbnail', async ({ request }) => {
+	// P0-3/P0-1: the migrated relative-path contract serves the LOCAL cache —
+	// never a remote redirect — for both the main art and the derived thumbnail.
+	const API = 'http://localhost:8010/api';
+	const main = await request.get(`${API}/images/agumon/main_image`);
+	expect(main.status()).toBe(200);
+	expect(main.headers()['content-type']).toMatch(/^image\//);
+	const thumb = await request.get(`${API}/images/agumon/thumbnail`);
+	expect(thumb.status()).toBe(200);
+	expect(thumb.headers()['content-type']).toMatch(/^image\//);
 });
 
 test('evolution graph expands to depth 2/3 with visible truncation on the real graph', async ({ page }) => {

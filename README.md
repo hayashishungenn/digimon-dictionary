@@ -61,7 +61,7 @@ uv run python scripts/sync_data.py --sources dapi,official,digimons_net   # 抓�
 uv run python scripts/verify_samples.py      # 抽样人工验证（50 随机 + 16 固定）
 
 # 2. API
-uv run uvicorn apps.api.main:app --reload   # http://localhost:8000/docs
+uv run python -m uvicorn apps.api.main:app --reload   # http://localhost:8000/docs
 
 # 3. Web
 cd apps/web
@@ -84,7 +84,7 @@ npm run dev                   # http://localhost:5173
 | `restore_local.py` | 从备份恢复（先校验哈希/integrity/schema，再原子替换；默认 dry-run，覆盖需 `--yes`） |
 | `inspect_snapshot.py` | 查看当前快照或备份目录摘要（`--path <backup>` / `--json`） |
 | `review_queue.py` | 人工复核工作流：`stats` / `list`（status/entity-type/category/q） / `show <id>`（含原始候选与 wikitext 原文） / `resolve <id> --status wontfix --note "…"` / `export --format csv|json --out …`（不删除） |
-| `uv run uvicorn apps.api.main:app` | FastAPI 后端 |
+| `uv run python -m uvicorn apps.api.main:app` | FastAPI 后端 |
 | `cd apps/web && npm run dev` | SvelteKit 前端 |
 
 ## 数据来源
@@ -119,7 +119,7 @@ uv run python scripts/verify_samples.py --n 50 --seed 20260815
 uv run python scripts/sync_data.py --sources dapi,official,digimons_net,wikimon,digidb --from-raw
 
 # 3. 启动后端 + 前端
-uv run uvicorn apps.api.main:app --reload   # http://localhost:8000/docs
+uv run python -m uvicorn apps.api.main:app --reload   # http://localhost:8000/docs
 cd apps/web && npm run dev                  # http://localhost:5173
 
 # 4. 一键健康摘要（只读，不输出任何 Token/环境变量）

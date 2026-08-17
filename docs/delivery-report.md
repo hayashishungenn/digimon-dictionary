@@ -93,7 +93,7 @@ uv run python scripts/validate_data.py
 uv run python scripts/verify_samples.py --n 50 --seed 20260815 --json /tmp/verify.json
 uv run python scripts/download_images.py
 # API / Web
-uv run uvicorn apps.api.main:app --reload
+uv run python -m uvicorn apps.api.main:app --reload
 cd apps/web && npm install && npm run dev
 # 测试（fixture + 真实 DB 浏览器验收）
 uv run pytest

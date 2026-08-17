@@ -25,7 +25,7 @@ export default defineConfig({
 		{
 			// build the hermetic fixture, then serve it via the API
 			command:
-				'uv run python apps/web/tests/fixtures/build_e2e_fixture.py && uv run uvicorn apps.api.main:app --port 8000',
+				'uv run python apps/web/tests/fixtures/build_e2e_fixture.py && uv run python -m uvicorn apps.api.main:app --port 8000',
 			cwd: '../..',
 			env: { ...process.env, DIGIDEX_DB: FIXTURE_DB },
 			url: 'http://localhost:8000/api/health',

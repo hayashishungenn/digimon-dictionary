@@ -147,7 +147,7 @@ uv run python scripts/sync_data.py --sources dapi,official,digimons_net,wikimon,
 uv run python scripts/validate_data.py
 uv run python scripts/verify_samples.py --n 50 --seed 20260815
 uv run python scripts/diagnose.py
-uv run uvicorn apps.api.main:app --reload     # :8000/docs
+uv run python -m uvicorn apps.api.main:app --reload     # :8000/docs
 cd apps/web && npm run dev                    # :5173
 powershell -ExecutionPolicy Bypass -File scripts\dev.ps1   # 一条命令启动，打印 PID 与停止方式
 uv run python scripts/backup_local.py --keep 5

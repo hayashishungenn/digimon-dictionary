@@ -18,8 +18,9 @@ Write-Host "  - API: http://localhost:8000/docs"
 Write-Host "  - Web: http://localhost:5173"
 Write-Host "Stopping: Stop-Process -Id <PID> -Force for each PID printed below."
 
-# API (uvicorn) on 8000
-$api = Start-Process -FilePath "uv" -ArgumentList "run","uvicorn","apps.api.main:app","--reload","--port","8000" `
+# API (uvicorn) on 8000 — uv run python -m uvicorn avoids the Windows
+# "uv trampoline failed to canonicalize script path" error (P0-3).
+$api = Start-Process -FilePath "uv" -ArgumentList "run","python","-m","uvicorn","apps.api.main:app","--reload","--port","8000" `
     -WorkingDirectory $root -PassThru -WindowStyle Hidden
 Write-Host ("API  PID {0}" -f $api.Id)
 

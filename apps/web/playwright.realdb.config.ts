@@ -24,7 +24,8 @@ export default defineConfig({
 	webServer: [
 		{
 			// the real DB is served read-only; never rebuilt here
-			command: 'uv run uvicorn apps.api.main:app --port 8010',
+			command:
+				'uv run python -m uvicorn apps.api.main:app --port 8010',
 			cwd: '../..',
 			env: {
 				...process.env,

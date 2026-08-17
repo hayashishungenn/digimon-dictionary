@@ -32,7 +32,7 @@ uv sync                                # install python deps
 uv run python scripts/sync_data.py     # full data sync (fetch→normalize→match→merge→validate→db)
 uv run python scripts/validate_data.py # quality report
 uv run python scripts/export_dataset.py# json/csv/sqlite export
-uv run uvicorn apps.api.main:app --reload
+uv run python -m uvicorn apps.api.main:app --reload
 cd apps/web && npm install && npm run dev
 uv run pytest                          # python tests
 ```
