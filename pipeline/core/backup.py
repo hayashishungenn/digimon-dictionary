@@ -27,7 +27,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .config import BACKUP_DIR, IMAGES_DIR, MANUAL_REVIEW_PATH, SYNC_STATE_PATH
+from .config import BACKUP_DIR, CONFLICT_PATH, IMAGES_DIR, MANUAL_REVIEW_PATH, SYNC_STATE_PATH
 from .manifest import manifest_path_for, read_manifest
 from .schema import SCHEMA_VERSION, connect_readonly, verify_integrity
 
@@ -100,7 +100,8 @@ def create_backup(
     state_path: Path = SYNC_STATE_PATH,
     manifest_path: Path | None = None,
     reports_dir: Path | None = None,
-    conflicts_path: Path = MANUAL_REVIEW_PATH,
+    conflicts_path: Path | None = None,
+    manual_review_path: Path | None = None,
     keep: int | None = None,
     images_dir: Path | None = None,
 ) -> Path:
@@ -108,17 +109,42 @@ def create_backup(
 
     The copied database is validated (integrity + hash) before ``backup.json``
     is written, so a corrupted copy never masquerades as a valid backup.
-    ``keep`` prunes the oldest backups beyond the newest ``keep`` (only ever
-    inside the validated backup root).
+    ``keep`` prunes the oldest backups beyond the newest ``keep`` — always
+    inside the backup ROOT that holds ``out_dir`` (a custom ``--out`` never
+    prunes the default root, P1-1).
+
+    ``conflicts_path`` / ``manual_review_path`` default to
+    ``CONFLICT_PATH`` / ``MANUAL_REVIEW_PATH``; a missing optional file is
+    recorded in ``missing_files`` (not a backup failure). Every copied file is
+    recorded in ``backup.json`` with its relative path, size and SHA-256 so a
+    later ``validate_backup`` can detect tampering.
     """
-    from .config import DATA_DIR, REPORTS_DIR
+    from .config import REPORTS_DIR
 
     reports_dir = reports_dir or REPORTS_DIR
     manifest_path = manifest_path or manifest_path_for(db_path)
+    conflicts_path = conflicts_path or CONFLICT_PATH
+    manual_review_path = manual_review_path or MANUAL_REVIEW_PATH
     out_dir = out_dir or BACKUP_DIR / f"backup-{_now_ts()}"
+    backup_root = out_dir.parent
 
     if not db_path.exists():
         raise BackupError(f"database does not exist: {db_path}")
+
+    # Fold any WAL content into the main DB file BEFORE copying so the backup
+    # copy is complete and self-contained (P1-1). A busy checkpoint is best
+    # effort — warn instead of failing the whole backup.
+    try:
+        from .schema import checkpoint_and_close, connect
+
+        if not checkpoint_and_close(connect(db_path)):
+            print(
+                f"WARNING: WAL checkpoint before backup was busy; the backup may "
+                f"miss un-flushed WAL content ({db_path})"
+            )
+    except Exception:  # noqa: BLE001
+        print(f"WARNING: could not checkpoint {db_path} before backup")
+
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "reports").mkdir(parents=True, exist_ok=True)
 
@@ -133,7 +159,7 @@ def create_backup(
         "report_json": reports_dir / "data-quality.json",
         "report_md": reports_dir / "data-quality.md",
         "conflicts": conflicts_path,
-        "manual_review": DATA_DIR / "manual_review_queue.json",
+        "manual_review": manual_review_path,
     }
     for role, src in source_of.items():
         target = out_dir / CORE_FILES[role]
@@ -177,7 +203,12 @@ def create_backup(
         "includes_images": includes_images,
         "image_stage": manifest.get("image_stage"),
         "files": {
-            role: {"size": p.stat().st_size} for role, p in copied.items()
+            role: {
+                "path": CORE_FILES[role].as_posix(),
+                "size": p.stat().st_size,
+                "sha256": _sha256(p),
+            }
+            for role, p in copied.items()
         },
         "missing_files": missing,
     }
@@ -186,7 +217,7 @@ def create_backup(
     )
 
     if keep is not None:
-        pruned = prune_backups(BACKUP_DIR, keep=keep, keep_exact=out_dir)
+        pruned = prune_backups(backup_root, keep=keep, keep_exact=out_dir)
         if pruned:
             print(f"pruned old backups: {[p.name for p in pruned]}")
     return out_dir
@@ -227,10 +258,25 @@ def validate_backup(backup_dir: Path) -> dict:
     meta = json.loads(meta_path.read_text("utf-8"))
 
     for role, rel in CORE_FILES.items():
-        if meta.get("files", {}).get(role) is None:
+        entry = meta.get("files", {}).get(role)
+        if entry is None:
             continue  # runtime file was missing at backup time — recorded, not required
-        if not (backup_dir / rel).exists():
+        p = backup_dir / rel
+        if not p.exists():
             raise BackupError(f"backup is missing {rel} (role={role})")
+        # P1-1: every recorded file must match its recorded size + SHA-256, not
+        # just the database — a tampered state/report/conflict/review file is
+        # detected before any restore could overwrite the live dataset.
+        if entry.get("size") is not None and p.stat().st_size != entry["size"]:
+            raise BackupError(
+                f"{rel} size mismatch: backup.json says {entry['size']}, actual {p.stat().st_size}"
+            )
+        if entry.get("sha256"):
+            actual = _sha256(p)
+            if actual != entry["sha256"]:
+                raise BackupError(
+                    f"{rel} SHA-256 mismatch: backup.json says {entry['sha256']}, actual {actual}"
+                )
 
     db_copy = backup_dir / CORE_FILES["database"]
     if not db_copy.exists():
@@ -288,6 +334,10 @@ def restore_backup(
         "publish_manifest": manifest_path,
         "report_json": reports_dir / "data-quality.json",
         "report_md": reports_dir / "data-quality.md",
+        # P1-1: conflicts / manual review ride along when the backup has them
+        # (optional — a backup made before these files existed is still valid).
+        "conflicts": db_path.parent / "data_conflicts.json",
+        "manual_review": db_path.parent / "manual_review_queue.json",
     }
     staged: list[tuple[Path, Path]] = []  # (temp, target)
     try:
