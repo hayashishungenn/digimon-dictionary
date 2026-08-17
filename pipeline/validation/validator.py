@@ -320,6 +320,27 @@ def validate(conn: sqlite3.Connection) -> dict[str, Any]:
     if thumb_failed:
         issue("warning", "thumbnail_failed",
               f"{thumb_failed} thumbnail derivation(s) failed — see digimon_image.failure_reason")
+    # P0-1: local_path / digimon.thumbnail must be cache-root RELATIVE or NULL.
+    # An absolute filesystem path leaks the machine layout, breaks after a
+    # checkout move or restore, and is a publish-blocking error (never a hint).
+    from pipeline.core.images import is_bad_stored_path
+
+    abs_paths = 0
+    for (p,) in conn.execute(
+        "SELECT local_path FROM digimon_image WHERE local_path IS NOT NULL"
+    ).fetchall():
+        if is_bad_stored_path(p):
+            abs_paths += 1
+    for (t,) in conn.execute(
+        "SELECT thumbnail FROM digimon WHERE thumbnail IS NOT NULL AND TRIM(thumbnail) != ''"
+    ).fetchall():
+        if is_bad_stored_path(t):
+            abs_paths += 1
+    if abs_paths:
+        issue(
+            "error", "absolute_image_path",
+            f"{abs_paths} image path(s) are absolute — must be cache-root relative or NULL",
+        )
 
     # --- coverage --------------------------------------------------------------
     # verified = sourced/checked name (official/community/...), present = any value.
@@ -532,6 +553,7 @@ def validate(conn: sqlite3.Connection) -> dict[str, Any]:
                 "pending": img_pending,
                 "thumbnails_derived": thumb_ok,
                 "thumbnails_failed": thumb_failed,
+                "absolute_local_paths": abs_paths,
             },
             "profiles": {
                 "zh_cn": coverage("profile_zh_cn"),

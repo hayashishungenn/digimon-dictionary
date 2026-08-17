@@ -143,6 +143,31 @@ def test_validator_detects_broken_relation(tmp_path):
     assert any(i["check"] == "broken_relation" for i in report["issues"])
 
 
+def test_validator_blocks_absolute_image_paths(tmp_path):
+    """P0-1: a local_path or digimon.thumbnail that is an absolute filesystem
+    path is a publish-blocking error; a relative value passes."""
+    conn = connect(tmp_path / "i.sqlite")
+    create_schema(conn)
+    _upsert(conn, "agumon", _rec("dapi", "1", "Agumon"))
+    did = conn.execute("SELECT id FROM digimon WHERE canonical_slug='agumon'").fetchone()[0]
+    conn.execute(
+        """INSERT INTO digimon_image(digimon_id, image_type, remote_url, local_path, download_status)
+           VALUES(?, 'main_image', 'https://x/a.png', ?, 'downloaded')""",
+        [did, r"C:\Users\old\Github\Digimon_Dictionary\data\images\digi_00001_Agumon.png"],
+    )
+    conn.commit()
+    report = validate(conn)
+    assert any(i["check"] == "absolute_image_path" for i in report["issues"])
+    assert report["coverage"]["images"]["absolute_local_paths"] == 1
+
+    # a relative value is fine
+    conn.execute("UPDATE digimon_image SET local_path='digi_00001_ab12cd34.png' WHERE digimon_id=?", [did])
+    conn.commit()
+    report = validate(conn)
+    assert not any(i["check"] == "absolute_image_path" for i in report["issues"])
+    assert report["coverage"]["images"]["absolute_local_paths"] == 0
+
+
 def test_validator_detects_fts_mismatch(tmp_path):
     conn = connect(tmp_path / "f.sqlite")
     create_schema(conn)
@@ -231,6 +256,60 @@ def test_verify_samples_zero_on_success(monkeypatch, tmp_path):
     monkeypatch.setattr(vs, "DB_PATH", db)
     monkeypatch.setattr(vs, "FIXED", ["Agumon"])  # fixed list must all be present
     assert vs.main(["--n", "1"]) == 0
+
+
+def test_verify_samples_category_mapping():
+    """P1-2: a sample's failure/gap reason maps to the documented categories."""
+    import scripts.verify_samples as vs
+
+    assert vs._sample_category({"found": False}) == "match_failure"
+    assert vs._sample_category({"found": True, "problems": [{"status": "sync_failure"}],
+                                "conflicts": [], "gaps": []}) == "parse_failure"
+    assert vs._sample_category({"found": True, "problems": [{"status": "unexplained"}],
+                                "conflicts": [], "gaps": []}) == "fetch_failure"
+    assert vs._sample_category({"found": True, "problems": [], "conflicts": [{"field": "level"}],
+                                "gaps": []}) == "conflict"
+    assert vs._sample_category({"found": True, "problems": [], "conflicts": [],
+                                "gaps": [{"field": "image"}]}) == "image_missing"
+    assert vs._sample_category({"found": True, "problems": [], "conflicts": [],
+                                "gaps": [{"field": "level"}]}) == "no_source"
+
+
+def test_verify_samples_report_has_audit_fields(monkeypatch, tmp_path):
+    """P1-2: the JSON gate report carries run_id, sources, review-queue status
+    and failure categories — it is auditable against the live DB."""
+    import scripts.verify_samples as vs
+
+    db = tmp_path / "g.sqlite"
+    conn = connect(db)
+    create_schema(conn)
+    _upsert(conn, "agumon", _full_rec("agumon", "Agumon", "アグモン", "亚古兽"))
+    conn.execute(
+        """INSERT INTO sync_run(run_id, status, sources, snapshot_date, started_at, finished_at)
+           VALUES('run-x','ok','dapi','2026-01-01','2026-01-01T00:00:00+00:00','2026-01-01T00:00:01+00:00')"""
+    )
+    conn.execute(
+        """INSERT INTO source_sync(source, run_id, status, started_at, finished_at, records,
+           parsed_count, failed_count, raw_completeness, content_hash, payload_hash)
+           VALUES('dapi','run-x','ok','2026-01-01T00:00:00+00:00','2026-01-01T00:00:01+00:00',1,1,0,1,'h','p')"""
+    )
+    conn.execute(
+        "INSERT INTO manual_review_queue(entity_type, entity_id, reason, status) "
+        "VALUES('digimon', 1, 'needs review', 'open')"
+    )
+    conn.commit()
+    conn.close()
+
+    out = tmp_path / "vs.json"
+    monkeypatch.setattr(vs, "DB_PATH", db)
+    monkeypatch.setattr(vs, "FIXED", ["Agumon"])
+    assert vs.main(["--n", "1", "--json", str(out)]) == 0
+    report = json.loads(out.read_text("utf-8"))
+    assert report["run_id"] == "run-x"
+    assert report["sources"] == ["dapi"]
+    assert report["review_queue"]["open"] == 1
+    assert "failure_categories" in report
+    assert report["seed"] == vs.DEFAULT_SEED
 
 
 def test_validate_data_exit_code(monkeypatch, tmp_path):

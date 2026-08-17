@@ -157,6 +157,31 @@ def check_digimon(conn: sqlite3.Connection, digimon_id: int) -> dict:
     }
 
 
+def _sample_category(result: dict) -> str:
+    """P1-2: classify one sample by its dominant failure/gap reason.
+
+    ``no_source`` — fields genuinely absent across ingested sources.
+    ``fetch_failure`` — unexplained absence / a source had the data but it never
+      reached the candidate (no coverage audit row).
+    ``parse_failure`` — a source had the field but the pipeline lost it while
+      parsing/normalizing (field_coverage status ``sync_failure``).
+    ``match_failure`` — the sample could not be resolved to an entity at all.
+    ``conflict`` — real unresolved cross-source disagreement (in review).
+    ``image_missing`` — the only documented gap is the image field.
+    """
+    if not result["found"]:
+        return "match_failure"
+    if any(p["status"] == "sync_failure" for p in result["problems"]):
+        return "parse_failure"
+    if result["problems"]:
+        return "fetch_failure"
+    if result["conflicts"]:
+        return "conflict"
+    if any(g["field"] == "image" for g in result["gaps"]):
+        return "image_missing"
+    return "no_source"
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=50)
@@ -241,13 +266,49 @@ def main(argv: list[str] | None = None) -> int:
         if fixed_fail:
             print(f"FIXED SAMPLE FAILURES: {fixed_fail}")
 
+        # P1-2: sample-level failure categories + the queue / run context so the
+        # gate report is auditable against the live DB and its sync history.
+        # ``manual_pending`` (items awaiting human review) is reported via
+        # review_queue.open — the samples whose conflicts land there surface as
+        # ``conflict``.
+        def _categories(results: list[dict]) -> dict[str, int]:
+            cats: dict[str, int] = {}
+            for r in results:
+                if r["found"] and not r["problems"] and not r["conflicts"] and not r["gaps"]:
+                    continue  # fully clean
+                c = _sample_category(r)
+                cats[c] = cats.get(c, 0) + 1
+            return cats
+
+        latest_run = conn.execute(
+            "SELECT run_id FROM sync_run ORDER BY run_id DESC LIMIT 1"
+        ).fetchone()
+        review_queue = conn.execute(
+            "SELECT status, COUNT(*) c FROM manual_review_queue GROUP BY status"
+        ).fetchall()
+        review_queue_dict = {r["status"]: r["c"] for r in review_queue}
+        run_sources = [
+            r["source"] for r in conn.execute(
+                "SELECT DISTINCT source FROM source_sync WHERE run_id = ? ORDER BY source",
+                [latest_run["run_id"] if latest_run else ""],
+            )
+        ] if latest_run else None
+
         report = {
             "generated_at": datetime.now().isoformat(timespec="seconds"),
             "seed": args.seed,
+            "run_id": latest_run["run_id"] if latest_run else None,
             "snapshot": snapshot,
+            "sources": run_sources,
+            "review_queue": {
+                "open": review_queue_dict.get("open", 0),
+                "resolved": review_queue_dict.get("resolved", 0),
+                "wontfix": review_queue_dict.get("wontfix", 0),
+            },
             "totals": {"total": total, "sampled": len(sample_ids),
                        "clean": ok, "gaps": gap_count, "conflicts": conflict_count,
                        "hard_failures": len(fail_results)},
+            "failure_categories": _categories(random_results + fixed_results),
             "random_sample": random_results,
             "fixed_sample": fixed_results,
             "fixed_pass": len(FIXED) - fixed_fail,
