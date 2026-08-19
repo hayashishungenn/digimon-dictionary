@@ -419,6 +419,7 @@ def review_export(
     status: str = Query(default="open", pattern="^(open|resolved|wontfix)$"),
     entity_type: str | None = None,
     q: str | None = None,
+    category: str | None = Query(default=None, pattern="^(external_target|matching_failure|conflict|wikitext|other)$"),
 ) -> Response:
     """Export the review queue as JSON or CSV. Read-only — never deletes.
     Refuses with 413 when the result would exceed the export cap, rather than
@@ -426,14 +427,18 @@ def review_export(
     EXPORT_CAP = 10_000
     conn = _db()
     try:
-        total = queries.count_review_items(conn, status=status, entity_type=entity_type, q=q)
+        total = queries.count_review_items(
+            conn, status=status, entity_type=entity_type, q=q, category=category,
+        )
         if total > EXPORT_CAP:
             raise HTTPException(
                 413,
                 f"review queue export would be {total} rows (cap {EXPORT_CAP}); "
                 "narrow the filter (status/entity-type/q) or raise EXPORT_CAP",
             )
-        items = queries.list_review_items(conn, status=status, entity_type=entity_type, q=q, limit=EXPORT_CAP)
+        items = queries.list_review_items(
+            conn, status=status, entity_type=entity_type, q=q, category=category, limit=EXPORT_CAP,
+        )
         if format == "csv":
             import csv as _csv
             import io as _io

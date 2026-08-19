@@ -9,6 +9,7 @@ The fixture intentionally covers the E2E scenarios:
 - an extended entity with no image (agumon-ds) for the missing-image test
 - an alias 战暴 -> wargreymon for the fan-abbreviation search test
 - a snapshot row so the About page can show runtime counts
+- two manual-review rows for the local review queue flow
 """
 from __future__ import annotations
 
@@ -121,6 +122,28 @@ def main() -> int:
         """INSERT OR IGNORE INTO digimon_alias(digimon_id, alias, language, alias_type, source, verified)
            VALUES(?,?,?,?,?,?)""",
         [ids["war-greymon"], "战暴", "zh_cn", "fan_translation", "manual", 0],
+    )
+    conn.execute(
+        "INSERT INTO manual_review_queue(entity_type, entity_id, reason, detail, run_id) "
+        "VALUES(?,?,?,?,?)",
+        [
+            "digimon",
+            ids["agumon"],
+            "ambiguous exact name needs review",
+            '{"canonical_slug":"agumon","candidates":["Agumon","Agumon (2006)"]}',
+            "run-e2e-review",
+        ],
+    )
+    conn.execute(
+        "INSERT INTO manual_review_queue(entity_type, entity_id, reason, detail, run_id) "
+        "VALUES(?,?,?,?,?)",
+        [
+            "edge",
+            None,
+            "unresolved evolution target(s) for agumon",
+            '{"canonical_slug":"agumon","unresolved":[{"source":"wikimon","ref":"FooMon"}]}',
+            "run-e2e-review",
+        ],
     )
     store.rebuild_fts()
     store.write_snapshot(notes="e2e fixture")

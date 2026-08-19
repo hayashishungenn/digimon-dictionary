@@ -350,3 +350,53 @@ test('works with prefers-reduced-motion', async ({ page }) => {
 	await page.getByRole('button', { name: '图谱模式' }).click();
 	await expect(page.locator('.evo-graph').first()).toBeVisible();
 });
+
+
+test('review queue filters, exports, and resolves fixture items', async ({ page }) => {
+	await page.goto('/');
+	await page.getByRole('link', { name: '复核队列' }).click();
+	await expect(page).toHaveURL(/\/review$/);
+	await expect(page.getByRole('heading', { name: '人工复核队列' })).toBeVisible();
+	await expect(page.getByTestId('review-open-count').locator('strong')).toHaveText('2');
+	await expect(page.getByText('ambiguous exact name needs review')).toBeVisible();
+	await expect(page.getByText('run_id: run-e2e-review').first()).toBeVisible();
+
+	await page.getByLabel('复核分类').selectOption('matching_failure');
+	await expect(page).toHaveURL(/category=matching_failure/);
+	await expect(page.getByText('ambiguous exact name needs review')).toBeVisible();
+	await expect(page.getByText('unresolved evolution target\(s\) for agumon')).toHaveCount(0);
+	const jsonExport = page.getByTestId('review-export-json');
+	await expect(jsonExport).toHaveAttribute('href', /format=json/);
+	await expect(jsonExport).toHaveAttribute('href', /category=matching_failure/);
+
+	await page.getByRole('button', { name: '标记已解决' }).click();
+	await expect(page.getByText('请填写处理备注')).toBeVisible();
+	await page.getByLabel('处理备注').fill('fixture reviewed');
+	await page.getByRole('button', { name: '标记已解决' }).click();
+	await expect(page.getByTestId('review-open-count').locator('strong')).toHaveText('1');
+	await expect(page.getByText('ambiguous exact name needs review')).toHaveCount(0);
+
+	await page.getByLabel('复核状态').selectOption('resolved');
+	await expect(page.getByText('ambiguous exact name needs review')).toBeVisible();
+	await expect(page.getByText('fixture reviewed')).toBeVisible();
+
+	await page.getByLabel('复核状态').selectOption('open');
+	await page.getByLabel('复核分类').selectOption('external_target');
+	await expect(page.getByText('unresolved evolution target(s) for agumon')).toBeVisible();
+	await page.getByLabel('处理备注').fill('defer external source check');
+	await page.getByRole('button', { name: '标记暂不处理' }).click();
+	await expect(page.getByTestId('review-open-count').locator('strong')).toHaveText('0');
+
+	await page.getByLabel('复核状态').selectOption('wontfix');
+	await expect(page.getByText('unresolved evolution target(s) for agumon')).toBeVisible();
+});
+
+test('review queue has no horizontal overflow on a narrow screen', async ({ page }) => {
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto('/review');
+	await expect(page.getByRole('heading', { name: '人工复核队列' })).toBeVisible();
+	const overflow = await page.evaluate(
+		() => document.documentElement.scrollWidth > document.documentElement.clientWidth
+	);
+	expect(overflow).toBe(false);
+});

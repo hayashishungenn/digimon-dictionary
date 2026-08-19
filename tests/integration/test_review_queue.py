@@ -186,6 +186,12 @@ def test_api_review_export_json_and_csv(review_db, monkeypatch):
     assert rows[0][0] == "id"
     assert rows[0][3] == "category"
     assert len(rows) == 7  # header + 6 items
+    matching = c.get(
+        "/api/review/export",
+        params={"format": "json", "category": "matching_failure"},
+    ).json()
+    assert matching["count"] == 1
+    assert matching["items"][0]["category"] == "matching_failure"
 
 
 def test_api_review_pagination_and_category_filter_in_sql(review_db, monkeypatch):

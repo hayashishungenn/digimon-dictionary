@@ -23,6 +23,7 @@
 		<nav class="nav-links" aria-label="主导航">
 			<a href="/">图鉴</a>
 			<a href="/favorites">收藏</a>
+			<a href="/review">复核队列</a>
 			<a href="/about">关于 / 数据</a>
 		</nav>
 	</div>

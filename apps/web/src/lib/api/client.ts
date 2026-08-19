@@ -6,6 +6,11 @@ import type {
 	GroupResponse,
 	ListResponse,
 	Meta,
+	ResolveReviewResponse,
+	ReviewCategory,
+	ReviewListResponse,
+	ReviewStats,
+	ReviewStatus,
 	SearchResponse,
 	Skill,
 } from './types';
@@ -18,6 +23,21 @@ async function get<T>(path: string): Promise<T> {
 	if (!res.ok) {
 		const body = await res.text().catch(() => '');
 		throw new ApiError(res.status, body || res.statusText);
+	}
+	return (await res.json()) as T;
+}
+
+// P1-3: the review resolve endpoint is the only write the UI makes; JSON body,
+// same ApiError contract as get() so userMessage() maps 404/409/422/5xx.
+async function post<T>(path: string, body: unknown): Promise<T> {
+	const res = await fetch(`${API_BASE}${path}`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body),
+	});
+	if (!res.ok) {
+		const text = await res.text().catch(() => '');
+		throw new ApiError(res.status, text || res.statusText);
 	}
 	return (await res.json()) as T;
 }
@@ -59,6 +79,23 @@ export interface ListFilters {
 	offset?: number;
 }
 
+export interface ReviewListFilters {
+	status?: ReviewStatus;
+	entity_type?: string | null;
+	q?: string | null;
+	category?: ReviewCategory | null;
+	limit?: number;
+	offset?: number;
+}
+
+export interface ReviewExportFilters {
+	format?: 'json' | 'csv';
+	status?: ReviewStatus;
+	entity_type?: string | null;
+	q?: string | null;
+	category?: ReviewCategory | null;
+}
+
 function qs(params: Record<string, string | number | boolean | null | undefined>): string {
 	const sp = new URLSearchParams();
 	for (const [k, v] of Object.entries(params)) {
@@ -77,6 +114,20 @@ export const api = {
 	skills: (ident: string) => get<Skill[]>(`/digimon/${ident}/skills`),
 	group: (name: string) => get<GroupResponse>(`/groups/${encodeURIComponent(name)}`),
 	byIds: (ids: number[]) => get<{ items: DigimonListItem[] }>(`/digimon/by-id?ids=${ids.join(',')}`),
+	review: (filters: ReviewListFilters = {}) =>
+		get<ReviewListResponse>(
+			`/review${qs({
+				status: filters.status,
+				entity_type: filters.entity_type,
+				q: filters.q,
+				category: filters.category,
+				limit: filters.limit,
+				offset: filters.offset,
+			})}`
+		),
+	reviewStats: () => get<ReviewStats>('/review/stats'),
+	resolveReview: (id: number, status: Exclude<ReviewStatus, 'open'>, note: string) =>
+		post<ResolveReviewResponse>(`/review/${id}/resolve`, { status, note }),
 	// Resolve an API-relative image path (e.g. "/api/images/agumon/thumbnail")
 	// to an absolute URL the browser can load.
 	imageUrl: (path: string | null | undefined): string | null => {
@@ -88,6 +139,16 @@ export const api = {
 	thumbUrl: (ident: string | number) => `${API_BASE}/images/${ident}/thumbnail`,
 	mainUrl: (ident: string | number) => `${API_BASE}/images/${ident}/main_image`,
 };
+
+export function reviewExportUrl(filters: ReviewExportFilters = {}): string {
+	return `${API_BASE}/review/export${qs({
+		format: filters.format ?? 'json',
+		status: filters.status,
+		entity_type: filters.entity_type,
+		q: filters.q,
+		category: filters.category,
+	})}`;
+}
 
 // Debounced search helper for the search bar.
 export function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: number): (...args: A) => void {

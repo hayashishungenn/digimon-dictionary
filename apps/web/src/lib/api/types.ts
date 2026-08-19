@@ -238,3 +238,50 @@ export interface GroupResponse {
 	members: DigimonListItem[];
 	count: number;
 }
+
+// ---- manual review queue (P1-3) ---------------------------------------------
+export type ReviewStatus = 'open' | 'resolved' | 'wontfix';
+export type ReviewCategory =
+	| 'external_target'
+	| 'matching_failure'
+	| 'conflict'
+	| 'wikitext'
+	| 'other';
+
+export interface ReviewItem {
+	id: number;
+	entity_type: string;
+	entity_id: number | string | null;
+	reason: string;
+	detail: Record<string, unknown> | null;
+	status: ReviewStatus;
+	category: ReviewCategory | string;
+	created_at: string | null;
+	resolved_at: string | null;
+	run_id: string | null;
+	note: string | null;
+}
+
+export interface ReviewListResponse {
+	items: ReviewItem[];
+	total: number;
+	limit: number;
+	offset: number;
+}
+
+export interface ReviewStats {
+	by_status: Partial<Record<ReviewStatus, number>>;
+	by_entity: Record<string, number>;
+	by_category: Record<string, number>;
+	open: number;
+}
+
+export interface ResolveReviewResponse {
+	id: number;
+	entity_type: string;
+	entity_id: number | string | null;
+	reason: string;
+	status: 'resolved' | 'wontfix';
+	note: string;
+	resolved_at: string | null;
+}
