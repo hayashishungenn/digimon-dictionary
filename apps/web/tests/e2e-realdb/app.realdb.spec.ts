@@ -213,3 +213,28 @@ test('keyboard navigation reaches the primary controls', async ({ page }) => {
 	}
 	await expect(page.getByRole('textbox', { name: '搜索数码兽' })).toBeFocused();
 });
+
+test('review queue reads the real local data without horizontal overflow', async ({ page }) => {
+	const consoleErrors: string[] = [];
+	page.on('console', (message) => {
+		if (message.type() === 'error') consoleErrors.push(message.text());
+	});
+	page.on('pageerror', (error) => consoleErrors.push(String(error)));
+
+	await page.goto('/review');
+	await expect(page.getByRole('heading', { name: '人工复核队列' })).toBeVisible();
+	await expect(page.locator('.local-notice')).toContainText('LOCAL ONLY');
+	await expect(page.getByTestId('review-open-count').locator('strong')).toBeVisible();
+	await expect(page.getByTestId('review-export-json')).toHaveAttribute('href', /review\/export/);
+	const openCount = Number(await page.getByTestId('review-open-count').locator('strong').textContent());
+	if (openCount > 0) {
+		await expect(page.locator('[data-testid^="review-item-"]').first()).toBeVisible();
+	} else {
+		await expect(page.locator('.empty-state')).toBeVisible();
+	}
+	const overflow = await page.evaluate(
+		() => document.documentElement.scrollWidth > document.documentElement.clientWidth
+	);
+	expect(overflow).toBe(false);
+	expect(consoleErrors).toEqual([]);
+});
