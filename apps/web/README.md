@@ -55,8 +55,10 @@ npm run preview
 
 ## 目录
 
-- `src/routes/` — 首页（搜索/筛选/卡片）、详情页、组织页、收藏页、About。
+- `src/routes/` — 首页（搜索/筛选/卡片）、详情页、组织页、收藏页、About、`/review` 本地人工复核队列。
 - `src/lib/api/` — FastAPI client（client.ts / types.ts）。
 - `src/lib/stores/` — meta（运行时快照/计数）、favorites、personal（本地备注/标签/历史）。
 - `src/lib/components/` — 卡片、徽章、进化图、筛选控件、状态组件（skeleton/空/错误）、壳层。
 - `tests/` — `unit/`（Vitest）、`e2e/`（fixture）、`e2e-realdb/`（真实数据库）。
+
+`/review` 是仅本地自用的人工复核页面：从 API 读取 open/resolved/wontfix 队列，支持筛选、分页、JSON/CSV 导出和带备注的 resolve/wontfix；前端不直接打开或写入 SQLite。公网或局域网暴露前，必须先为写接口补充认证、CSRF 和严格的 CORS 策略。

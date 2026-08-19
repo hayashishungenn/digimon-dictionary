@@ -1,5 +1,19 @@
 # DigiDex 下一阶段自动执行任务书
 
+## 0.1 执行状态（2026-08-19）
+
+本节是本任务书的当前执行记录；下方第 3 节保留 2026-08-16 的历史审查基线，不应覆盖本节的最新结果。
+
+- P0-0、P0-1、P0-2、P0-3、P1-1、P1-2：已完成，并已有对应原子 commit。
+- P1-3 本地人工复核队列前端：已完成，commit `b6056a4`；fixture E2E 26/26 通过，`/review` 支持筛选、分页、导出、备注解决和移动端验收。
+- P2-1 真实数据库浏览器验收：已完成；realdb E2E 24/24 通过（桌面 + 窄屏），包含 review 页、无横向溢出和无 console error 检查。
+- P2-2 API 性能基线：已完成；新增 `scripts/benchmark_api.py` 和 `docs/api-performance-baseline-2026-08-19.md`，depth 2/3 在 node=500、edge=2500 预算内完成，无查询重构依据。
+- P3-1 文档与一键自检：已完成；`scripts/self_check.py --all` 通过 8/8 checks，文档数字与当前数据库证据已刷新，manifest/report/DB 哈希一致。
+
+当前真实数据库快照：`snapshot_date=2026-08-16`、`run_id=20260816T065459922120-127c8`、总数 1,736（official 1,316 / extended 420）、open review 775、schema v8、SQLite integrity ok。当前 manifest、报告和数据库三方哈希已重新校准并一致。最后一次同步的 `image_stage=skipped` 表示本地没有在本轮执行图片下载阶段，不将其误报为图片已刷新。
+
+---
+
 ## 1. 任务定位
 
 目标仓库：
@@ -72,7 +86,7 @@ uv run python -m uvicorn
 
 ---
 
-## 3. 当前审查基线
+## 3. 历史审查基线（2026-08-16）
 
 当前 HEAD：
 

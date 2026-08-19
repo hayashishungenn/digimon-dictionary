@@ -114,3 +114,20 @@ cb4c7a1 P0-1 evolution-bounded: bounded BFS graph, depth<=3, budget/truncation m
 ```
 
 > 所有提交均为原子 commit，未 push（本地 `main` 领先 `origin/main`）；工作区在最终验收时已清理。
+
+## 七、2026-08-19 增量验收刷新
+
+本节覆盖下一阶段任务书新增内容；前文 18/18、13/13 等数字保留为当时的历史记录。
+
+| 项目 | 最新结果 |
+|---|---|
+| 真实数据库 | snapshot 2026-08-16，run_id `20260816T065459922120-127c8`，1,736（official 1,316 / extended 420），schema v8，integrity ok |
+| review 页面 | `/review` 本地自用页面，支持筛选、分页、JSON/CSV 导出、备注 resolve/wontfix |
+| fixture E2E | 26/26 通过 |
+| realdb E2E | 24/24 通过（桌面 + 窄屏） |
+| Python 全量测试 | 353 passed，1 个既有 Starlette/httpx 弃用警告 |
+| 一键自检 | `scripts/self_check.py --all`：8/8 checks passed |
+| manifest/report/DB | `database_sha256_matches_db=true`、`report_sha256_matches_report=true`、`report_db_sha256_matches_db=true` |
+| API 性能 | 结果见 `docs/api-performance-baseline-2026-08-19.md`；进化 depth 2/3 受 node=500、edge=2500 预算约束 |
+
+当前仍有 248 个实体缺主图、775 个 open review，均为真实缺口或待人工处理，不以虚构数据消除。下一阶段 P3-1 的最终文档与一键自检门禁完成前，不把本历史报告改写为“所有后续任务已完成”。

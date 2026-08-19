@@ -2,8 +2,8 @@
 
 一个以**数据质量优先**的数码宝贝/数码兽全图鉴系统：三语言名称（简体中文 / English / 日本語）、等级、属性、类型、适应领域、所属组织、技能、进化关系（有向多对多图）、图片、简介、首次登场等资料，并提供可搜索、可筛选、可持续更新的 Web 图鉴。
 
-> **自用稳定版交付报告**：`docs/self-use-delivery-report.md`（两本任务书 S0-S2 + UI-P0/P1/P2 全部完成，
-> 含真实数据统计、最终全量验证、代码审查结论与已修复缺陷）。
+> **既有自用稳定版交付报告**：`docs/self-use-delivery-report.md`（覆盖 S0-S2 + UI-P0/P1/P2 的历史交付记录）。
+> 2026-08-19 后续任务执行状态见 `docs/next-stage-auto-mode-taskbook-2026-08-16.md`。
 
 > **声明**：本项目不隶属于 Bandai / Bandai Namco。数码宝贝相关的角色、名称与美术版权归其相应权利方所有。本项目仅用于个人研究、收藏与查询。
 
@@ -84,6 +84,8 @@ npm run dev                   # http://localhost:5173
 | `restore_local.py` | 从备份恢复（先校验哈希/integrity/schema，再原子替换；默认 dry-run，覆盖需 `--yes`） |
 | `inspect_snapshot.py` | 查看当前快照或备份目录摘要（`--path <backup>` / `--json`） |
 | `review_queue.py` | 人工复核工作流：`stats` / `list`（status/entity-type/category/q） / `show <id>`（含原始候选与 wikitext 原文） / `resolve <id> --status wontfix --note "…"` / `export --format csv|json --out …`（不删除） |
+| `self_check.py` | 一键运行 Python、数据诊断、Web check/unit/build，可选 fixture/realdb E2E，并校验 manifest/report/DB 哈希 |
+| `benchmark_api.py` | 对本地 API 固定端点记录 cold/hot 延迟、状态码、响应大小和进化图预算标记 |
 | `uv run python -m uvicorn apps.api.main:app` | FastAPI 后端 |
 | `cd apps/web && npm run dev` | SvelteKit 前端 |
 
@@ -124,6 +126,9 @@ cd apps/web && npm run dev                  # http://localhost:5173
 
 # 4. 一键健康摘要（只读，不输出任何 Token/环境变量）
 uv run python scripts/diagnose.py           # 或 --json
+
+# 5. 一键质量门禁（本地；包含 fixture + realdb E2E）
+uv run scripts/self_check.py --all
 ```
 
 Windows 一条命令启动两个进程：`powershell -ExecutionPolicy Bypass -File scripts\dev.ps1`
@@ -131,7 +136,13 @@ Windows 一条命令启动两个进程：`powershell -ExecutionPolicy Bypass -Fi
 窗口后清理仍占用 8000 / 5173 端口的进程）。
 
 备份 / 恢复 / 复核工作流见上方脚本表：`backup_local` / `restore_local` / `inspect_snapshot` /
-`review_queue`。
+`review_queue`。Web 端复核页面位于 `/review`，仅用于本地自用，前端通过 API 写入复核结果，不直接写 SQLite。
+
+API 性能基线（需先在 `127.0.0.1:8020` 启动 API）：
+
+```bash
+uv run scripts/benchmark_api.py --base-url http://127.0.0.1:8020/api
+```
 
 ## 本地自用与公网部署边界
 

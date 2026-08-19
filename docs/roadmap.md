@@ -40,7 +40,7 @@
 ### 待完成
 
 - [ ] 公开部署（数据库已避免内置第三方版权图片；部署所需环境变量见 `apps/api/main.py` `DIGIDEX_DB` / `DIGIDEX_CORS_ORIGINS`）
-- [ ] 搜索/筛选/查询性能深化（P2-1）：真实规模下的 N+1 消除、索引确认、冷/热查询耗时回归
+- [x] 搜索/筛选/查询性能深化（P2-1）：真实规模下的 N+1/分页/索引检查与冷/热查询基线见 `docs/api-performance-baseline-2026-08-19.md`
 - [ ] 独立扩展游戏数据（P2-2）：更多游戏版本的 game_digimon_stats / game_skill 接入（当前仅 Cyber Sleuth，`game_skill` 为空是合法状态）
 
 ## 阶段三（发布前修复与后续建设，P0/P1 任务书）
@@ -117,3 +117,14 @@
 - 无（两个任务书的全部任务已完成；两轮代码审查 → 修复 → 全流程验证均完成，最终报告见
   `docs/self-use-delivery-report.md`。安全审查 P1×5 + P2×8 + P3×5 已全部修复并带回归测试；
   第三轮发布期一致性审查 P1×2 + P2×3 + P3×1 也已全部处理，见同一报告，`pytest 269 passed`）
+
+## 下一阶段任务书执行状态（2026-08-19）
+
+对应任务书：`docs/next-stage-auto-mode-taskbook-2026-08-16.md`。
+
+- [x] P1-3 本地人工复核队列前端：`/review` 支持筛选、分页、导出、备注解决，fixture E2E 26/26。
+- [x] P2-1 真实数据库浏览器验收：realdb E2E 24/24，覆盖桌面和窄屏 review 页面、无横向溢出与 console error。
+- [x] P2-2 API 性能基线：固定端点 cold/hot 结果已记录；进化 depth 2/3 受 node=500、edge=2500 预算约束。
+- [x] P3-1 文档与一键自检：`scripts/self_check.py --all` 通过 8/8 checks，文档与 manifest/report/DB 当前证据一致；最后一次同步的 image_stage=skipped 已明确记录。
+
+“阶段四”上方的历史交付结论只描述此前 S0-S2/UI-P0/P1/P2 范围；本节才是 2026-08-19 后续任务的当前状态。

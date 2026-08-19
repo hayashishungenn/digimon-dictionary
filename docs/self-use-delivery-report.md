@@ -153,3 +153,22 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1   # 一条命令启动�
 uv run python scripts/backup_local.py --keep 5
 uv run python scripts/review_queue.py list --category wikitext
 ```
+
+## 七、2026-08-19 最新验收刷新
+
+前文的测试数量和快照日期是历史交付记录，当前结果以 `docs/next-stage-status-2026-08-19.md` 为准。
+
+| 项目 | 最新结果 |
+|---|---|
+| 真实数据库 | snapshot 2026-08-16，run_id `20260816T065459922120-127c8`，1,736（official 1,316 / extended 420），schema v8，integrity ok |
+| open review | 775；分类统计仍保留真实缺失、冲突和待确认状态 |
+| 图片 | 主图 1,488，缺 248；数据库缩略图 1,488；绝对路径 0 |
+| review UI | `/review` 仅本地自用，筛选/分页/导出/备注 resolve-wontfix 已接入 API |
+| fixture E2E | 26/26 通过 |
+| realdb E2E | 24/24 通过（桌面 + 窄屏） |
+| Python 全量测试 | 353 passed，1 个既有 Starlette/httpx 弃用警告 |
+| 一键自检 | `scripts/self_check.py --all`：8/8 checks passed |
+| manifest/report/DB | 三方 SHA-256 一致，`state_committed=true` |
+| API 性能 | 见 `docs/api-performance-baseline-2026-08-19.md` |
+
+已知限制保持不变：公网部署未做，review 写接口无认证，仅允许 localhost 自用；中文简介/技能名、部分名称和主图在可靠来源缺失时保留为空或进入 review queue。
