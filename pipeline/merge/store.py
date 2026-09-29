@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -23,9 +24,44 @@ from pipeline.core.enums import (
     parse_level,
 )
 from pipeline.core.models import MatchedEntity, SourceDigimon, SourceName, SourceSkill
-from pipeline.sources.wikitext import strip_residual_markup
+from pipeline.sources.wikitext import strip_markup, strip_residual_markup
 
 logger = logging.getLogger(__name__)
+
+
+# Anything that marks a value as carrying markup worth cleaning. Values without a
+# hit are returned untouched — `???` and `No.1<<Polyphony>>` are odd source text,
+# not residue, and must not be rewritten or dropped.
+_MARKUP_RE = re.compile(r"<!--|\{\{|\}\}|\[\[|\]\]|<ref|</|<[A-Za-z]|'{2,}")
+
+
+def _plain(value: str | None) -> str | None:
+    """User-visible short field -> guaranteed free of raw wikitext.
+
+    `profile` and `name_origin` already go through this net (the P1-2 blocks
+    further down), but `digimon_alias.alias` and `skill.name_*` were written
+    verbatim — so a language comment (`<!--Simplified Chinese--> 黑暗巨龙兽`), a
+    trailing template (`AeroVeedramon{{DD|a|earov-dramon}}`), a self-closing ref
+    (`<ref name=DRA/>`) and a truncated template (`シュ{{FGM`) all reached the DB
+    and were served straight into search keys.
+
+    Returns None when a value that *did* carry markup cleans down to nothing
+    (`", <ref name=DRA/>"` -> a bare `","`), so callers skip the row instead of
+    storing an empty alias.
+    """
+    if value is None:
+        return None
+    text = str(value)
+    if not _MARKUP_RE.search(text):
+        return text
+    text = strip_markup(text)
+    if re.search(r"\{\{|\}\}|\[\[|\]\]", text):
+        text = strip_residual_markup(text)
+    text = text.strip()
+    # A name must still carry at least one word character (letter/digit/kana/
+    # hanzi/hangul — `\\w` is Unicode-aware) — a leftover `,` or `>` is not a name.
+    return text if text and re.search(r"\w", text) else None
+
 
 _STATUS_RANK = {
     NameStatus.OFFICIAL: 4,
@@ -119,12 +155,12 @@ class CanonicalStore:
                 "VALUES(?,?,?,?,?,?,?,?)",
                 [
                     key,
-                    s.names.get("zh_cn"),
-                    s.names.get("en"),
-                    s.names.get("ja"),
-                    s.descriptions.get("zh_cn"),
-                    s.descriptions.get("en"),
-                    s.descriptions.get("ja"),
+                    _plain(s.names.get("zh_cn")),
+                    _plain(s.names.get("en")),
+                    _plain(s.names.get("ja")),
+                    _plain(s.descriptions.get("zh_cn")),
+                    _plain(s.descriptions.get("en")),
+                    _plain(s.descriptions.get("ja")),
                     s.source,
                 ],
             )
@@ -132,13 +168,14 @@ class CanonicalStore:
         # No reliable key: create anyway (orphan skills are flagged in validation).
         cur = self.conn.execute(
             "INSERT INTO skill(name_zh_cn, name_en, name_ja, source) VALUES(?,?,?,?)",
-            [s.names.get("zh_cn"), s.names.get("en"), s.names.get("ja"), s.source],
+            [_plain(s.names.get("zh_cn")), _plain(s.names.get("en")),
+             _plain(s.names.get("ja")), s.source],
         )
         return cur.lastrowid
 
     def _merge_skill_row(self, skill_id: int, s: SourceSkill) -> None:
         for col, lang in (("name_zh_cn", "zh_cn"), ("name_en", "en"), ("name_ja", "ja")):
-            v = (s.names.get(lang) or "").strip()
+            v = _plain(s.names.get(lang))
             if v:
                 self.conn.execute(
                     f"UPDATE skill SET {col} = COALESCE(NULLIF({col}, ''), ?) WHERE id = ?",
@@ -149,7 +186,7 @@ class CanonicalStore:
             ("description_en", "en"),
             ("description_ja", "ja"),
         ):
-            v = (s.descriptions.get(lang) or "").strip()
+            v = _plain(s.descriptions.get(lang))
             if v:
                 self.conn.execute(
                     f"UPDATE skill SET {col} = COALESCE(NULLIF({col}, ''), ?) WHERE id = ?",
@@ -385,6 +422,18 @@ class CanonicalStore:
         zh_tw = _pick_name([n for r in entity.records if r for n in r.names], "zh_tw")
         en_dub = _pick_name([n for r in entity.records if r for n in r.names], "en_dub")
 
+        # Names are user-visible *and* go straight into `digimon_fts`, so they must
+        # not carry markup — `<!--Traditional Chinese--> 黑暗巨龍獸` used to be
+        # searchable exactly like that. Clean once here and use these below; the
+        # SourceName objects stay intact for the source/status/verified selection.
+        zh_v = _plain(zh.value) if zh else None
+        en_v = _plain(en.value) if en else None
+        ja_v = _plain(ja.value) if ja else None
+        rom_v = _plain(rom.value) if rom else None
+        zh_hk_v = _plain(zh_hk.value) if zh_hk else None
+        zh_tw_v = _plain(zh_tw.value) if zh_tw else None
+        en_dub_v = _plain(en_dub.value) if en_dub else None
+
         # canonical world-view values selected by documented source priority;
         # every candidate and its real source/source_id is kept for auditing.
         levels = self._field_candidates(
@@ -419,7 +468,7 @@ class CanonicalStore:
         # zh name "verified" reflects the chosen status on both INSERT and
         # UPDATE (previously only INSERT set it — T2.8).
         zh_verified = int(
-            bool(zh) and NameStatus(zh.status) in (
+            bool(zh_v) and NameStatus(zh.status) in (
                 NameStatus.OFFICIAL, NameStatus.OFFICIAL_GAME,
                 NameStatus.OFFICIAL_ANIME, NameStatus.COMMUNITY,
             )
@@ -447,12 +496,12 @@ class CanonicalStore:
                     is_extended=?
                 WHERE id=?""",
                 [
-                    slug, zh.value if zh else None, zh.source if zh else None,
+                    slug, zh_v, zh.source if zh else None,
                     zh.status if zh else None,
-                    zh.value if zh else None, zh_verified,
-                    en.value if en else None, ja.value if ja else None,
-                    rom.value if rom else None, zh_hk.value if zh_hk else None,
-                    zh_tw.value if zh_tw else None, en_dub.value if en_dub else None,
+                    zh_v, zh_verified,
+                    en_v, ja_v,
+                    rom_v, zh_hk_v,
+                    zh_tw_v, en_dub_v,
                     level_value, level_raw, level_2, attr_value, attr_raw,
                     1 if xab else 0, 1 if is_official else 0,
                     image.main if image else None, None,  # P0-1: thumbnail must be relative/NULL, never a remote URL
@@ -472,11 +521,11 @@ class CanonicalStore:
                     content_hash, source_last_updated, updated_at)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 [
-                    slug, zh.value if zh else None, zh.source if zh else None,
+                    slug, zh_v, zh.source if zh else None,
                     zh.status if zh else None, zh_verified,
-                    zh_hk.value if zh_hk else None, zh_tw.value if zh_tw else None,
-                    en.value if en else None, en_dub.value if en_dub else None,
-                    ja.value if ja else None, rom.value if rom else None,
+                    zh_hk_v, zh_tw_v,
+                    en_v, en_dub_v,
+                    ja_v, rom_v,
                     level_value, level_raw, level_2, attr_value, attr_raw,
                     1 if xab else 0, 1 if is_official else 0, 0 if is_official else 1,
                     image.main if image else None, None,  # P0-1: thumbnail must be relative/NULL, never a remote URL
@@ -488,9 +537,9 @@ class CanonicalStore:
 
         # provenance for core fields (value_hash = hash of the actual value)
         names_value = {
-            "zh_cn": zh.value if zh else None,
-            "en": en.value if en else None,
-            "ja": ja.value if ja else None,
+            "zh_cn": zh_v,
+            "en": en_v,
+            "ja": ja_v,
         }
         self._prov("digimon", digimon_id, "names", entity, value=names_value)
         self._prov("digimon", digimon_id, "level", entity, value=level_value)
@@ -578,13 +627,18 @@ class CanonicalStore:
             self._add_alias(digimon_id, n)
 
     def _add_alias(self, digimon_id: int, n: SourceName) -> None:
+        alias = _plain(n.value)
+        if not alias:
+            # Nothing usable left after cleaning (`", <ref name=DRA/>"` -> `","`):
+            # an alias key that is pure punctuation only pollutes the search index.
+            return
         alias_type = self._alias_type(n)
         self.conn.execute(
             """INSERT OR IGNORE INTO digimon_alias
                (digimon_id, alias, language, region, alias_type, source, verified)
                VALUES(?,?,?,?,?,?,?)""",
             [
-                digimon_id, n.value, n.language, None, alias_type,
+                digimon_id, alias, n.language, None, alias_type,
                 n.source or "?", 0,
             ],
         )
