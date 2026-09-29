@@ -62,6 +62,8 @@ TARGETS = [
 
 
 _ALIAS_COLUMNS = ("digimon_id", "alias", "language", "region", "alias_type", "source", "verified")
+_ALIAS_COLS_SQL = ", ".join(_ALIAS_COLUMNS)
+_ALIAS_PLACEHOLDERS = ",".join("?" * len(_ALIAS_COLUMNS))
 
 
 def _queue(conn: sqlite3.Connection, entity_type: str, entity_id: int | None,
@@ -81,15 +83,15 @@ def _repair_aliases(conn: sqlite3.Connection, dry: bool, show: int) -> dict[str,
     (digimon_id, alias, language) rejects a plain UPDATE when two rows collapse
     onto the same value, and a collision must merge provenance, not abort."""
     rows = conn.execute(
-        "SELECT id, %s FROM digimon_alias ORDER BY id" % ", ".join(_ALIAS_COLUMNS)
+        f"SELECT id, {_ALIAS_COLS_SQL} FROM digimon_alias ORDER BY id"
     ).fetchall()
     plan = [(r, _plain(r["alias"])) for r in rows if _plain(r["alias"]) != r["alias"]]
     stat = {"changed": 0, "dropped": 0, "merged": 0}
     printed = 0
     for row, new in plan:
         if show and printed < show:
-            print("  alias  %-9s %r -> %r"
-                  % ("drop" if not new else "rewrite", row["alias"][:70], new))
+            kind = "drop" if not new else "rewrite"
+            print(f"  alias  {kind:<9} {row['alias'][:70]!r} -> {new!r}")
             printed += 1
         if dry:
             continue
@@ -117,8 +119,7 @@ def _repair_aliases(conn: sqlite3.Connection, dry: bool, show: int) -> dict[str,
             stat["merged"] += 1
             continue
         conn.execute(
-            "INSERT INTO digimon_alias(%s) VALUES(%s)"
-            % (", ".join(_ALIAS_COLUMNS), ",".join("?" * len(_ALIAS_COLUMNS))),
+            f"INSERT INTO digimon_alias({_ALIAS_COLS_SQL}) VALUES({_ALIAS_PLACEHOLDERS})",
             [row[c] if c != "alias" else new for c in _ALIAS_COLUMNS],
         )
     return stat
@@ -130,20 +131,20 @@ def _repair_table(conn: sqlite3.Connection, table: str, id_col: str, entity_type
     printed = 0
     for col in columns:
         rows = conn.execute(
-            "SELECT %s AS id, %s AS v FROM %s WHERE %s IS NOT NULL AND %s <> ''"
-            % (id_col, col, table, col, col)
+            f"SELECT {id_col} AS id, {col} AS v FROM {table} "
+            f"WHERE {col} IS NOT NULL AND {col} <> ''"
         ).fetchall()
         for row in rows:
             new: Any = _plain(row["v"])
             if new == row["v"]:
                 continue
             if show and printed < show:
-                print("  %-8s %-18s #%-6s %r -> %r"
-                      % (table, col, row["id"], row["v"][:70], new))
+                print(f"  {table:<8} {col:<18} #{str(row['id']):<6} "
+                      f"{row['v'][:70]!r} -> {new!r}")
                 printed += 1
             if dry:
                 continue
-            conn.execute("UPDATE %s SET %s = ? WHERE %s = ?" % (table, col, id_col),
+            conn.execute(f"UPDATE {table} SET {col} = ? WHERE {id_col} = ?",
                          [new, row["id"]])
             _queue(conn, entity_type, row["id"], col, row["v"])
             stat["changed" if new else "emptied"] += 1
@@ -162,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.dry_run and not args.no_backup:
         out = create_backup(db_path=DB_PATH)
-        print("[backup] %s" % out)
+        print(f"[backup] {out}")
 
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -181,14 +182,14 @@ def main(argv: list[str] | None = None) -> int:
             CanonicalStore(conn).rebuild_fts()
             conn.commit()
         label = "dry-run" if args.dry_run else "done"
-        print("[%s] alias: %d rewritten, %d dropped, %d merged"
-              % (label, alias_stat["changed"], alias_stat["dropped"], alias_stat["merged"]))
+        print(f"[{label}] alias: {alias_stat['changed']} rewritten, "
+              f"{alias_stat['dropped']} dropped, {alias_stat['merged']} merged")
         for table in sorted(per_table):
             s = per_table[table]
-            print("[%s] %s: %d rewritten, %d emptied" % (label, table, s["changed"], s["emptied"]))
+            print(f"[{label}] {table}: {s['changed']} rewritten, {s['emptied']} emptied")
         if not args.dry_run:
             left = _residue_count(conn)
-            print("[verify] rows still carrying markup: %d" % left)
+            print(f"[verify] rows still carrying markup: {left}")
             return 1 if left else 0
         return 0
     finally:
@@ -198,11 +199,11 @@ def main(argv: list[str] | None = None) -> int:
 def _residue_count(conn: sqlite3.Connection) -> int:
     """Re-scan with the same cleaner: 0 means the repair really took."""
     left = 0
-    for table, id_col, _entity, columns in TARGETS:
+    for table, _id_col, _entity, columns in TARGETS:
         for col in columns:
             for (v,) in conn.execute(
-                    "SELECT %s FROM %s WHERE %s IS NOT NULL AND %s <> ''"
-                    % (col, table, col, col)):
+                    f"SELECT {col} FROM {table} "
+                    f"WHERE {col} IS NOT NULL AND {col} <> ''"):
                 if _plain(v) != v:
                     left += 1
     return left
