@@ -217,6 +217,13 @@ def _process_wikitext(text: str, depth: int = 0) -> tuple[str, bool]:
                 out.append(label or target)
             i = end + 2
             continue
+        if text[i] == "<" and (text.startswith("<<", i) or (i and text[i - 1] == "<")):
+            # `<<Polyphony>>` is notation, not a tag: falling through would read
+            # `<Polyphony>` as an unknown tag and eat `Polyphony` (one skill really
+            # is named `No.1<<Polyphony>>`). Emit the `<` literally.
+            out.append(text[i])
+            i += 1
+            continue
         if text[i] == "<":
             end = text.find(">", i)
             if end == -1:
@@ -227,9 +234,14 @@ def _process_wikitext(text: str, depth: int = 0) -> tuple[str, bool]:
             if tag == "ref":
                 close = text.find("</ref>", end)
                 if close != -1:
-                    end = close + 6
+                    i = close + 6
+                else:
+                    # Self-closing / unterminated ref (`<ref name=DRA/>`): `end` points at
+                    # the `>` itself, so advancing to it re-emits the `>` as body text —
+                    # `", <ref name=DRA/>"` cleaned to `", >"` and that stray `>` ended up
+                    # in digimon_alias.alias. Step past the `>` instead.
+                    i = end + 1
                 out.append("")
-                i = end
                 continue
             if tag in ("br", "nowiki", "noinclude", "includeonly", "small", "big", "sup", "sub"):
                 out.append(" " if tag == "br" else "")
@@ -284,7 +296,12 @@ def strip_residual_markup(text: str) -> str:
     while i < n:
         if text.startswith("{{", i):
             _status, j = _match_braces(text, i)
-            i = j if _status >= 0 else i + 2
+            # `_match_braces` returns (0, index_after_}}) when balanced and (-1, len(text))
+            # when the closer is missing. Skipping only the two braces on an unterminated
+            # template leaks its body into the text — a truncated field like `シュ{{FGM`
+            # (upstream scraped a half-open `{{FGM|…`) came out as `シュFGM`. `j` is the end
+            # of the enclosing template in both cases, so dropping to it is the safe net.
+            i = j
             continue
         if text.startswith("[[", i):
             end = text.find("]]", i)
@@ -292,7 +309,10 @@ def strip_residual_markup(text: str) -> str:
             continue
         out.append(text[i])
         i += 1
-    return re.sub(r"[ \t]+", " ", "".join(out)).strip()
+    # A truncated template/link can leave only its closer behind (`'/ Barmon}}'`,
+    # `'仙鷹獸 / Hipo Gryphonmon}}'`): the whole point of this function is to hand
+    # back a markup-free visible value, so stray closers go too.
+    return re.sub(r"[ \t]+", " ", re.sub(r"\}\}|]]", "", "".join(out))).strip()
 
 
 def strip_markup_keep_templates(text: str) -> str:
